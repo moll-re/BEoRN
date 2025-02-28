@@ -9,6 +9,7 @@ from .constants import *
 from .functions import Beta, find_nearest
 from .cosmo import dTb_fct
 from .parameters import Parameters
+from .computing_profiles import RadiationProfiles
 
 
 def Delta_21cm_PS_fixed_k(k,PS,plot=True):
@@ -518,7 +519,7 @@ Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775
                    343109759067.9875])
 
 
-def plot_1D_profiles(parameters: Parameters, profile, ind_M, z_liste):
+def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste):
     import warnings
     import matplotlib.pyplot as plt
     from .cosmo import T_adiab

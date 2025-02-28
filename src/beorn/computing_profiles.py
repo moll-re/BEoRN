@@ -10,7 +10,7 @@ from scipy.interpolate import splrep, splev, interp1d
 from .cosmo import comoving_distance, hubble
 from .global_qty import *
 from .cross_sections import alpha_HII
-from .massaccretion import *
+from .massaccretion import mass_accretion
 from .astro import *
 from .couplings import eps_lyal
 from .functions import *
@@ -35,9 +35,9 @@ class RadiationProfiles:
     def __init__(self, parameters: Parameters):
         self.z_initial = parameters.solver.z_max  # starting redshift
         if self.z_initial < 35:
+            # TODO: add this warning as a validator of the parameters dataclass
             print('WARNING : z_start (parameters.solver.zmax) should be larger than 35.  ')
-        self.z_end = parameters.solver.z_min  # ending redshift
-        self.alpha = parameters.source.mass_accretion_alpha
+
         # TODO remove hardcoded values
         rmin = 1e-2
         rmax = 600
@@ -46,39 +46,30 @@ class RadiationProfiles:
         self.r_grid = rr  ##cMpc/h
 
         self.z_arr = np.flip(np.sort(np.unique(np.concatenate((def_redshifts(parameters),np.arange(6,40,0.5))))))  ## we add up some redshifts to be converged
-        
-        p = parameters.simulation
-        self.M_Bin = np.logspace(np.log10(p.halo_mass_bin_min), np.log10(p.halo_mass_bin_max), p.halo_mass_bin_n, base=10) ## array of masses at the final redshift
-
-        if p.average_profiles_in_bin:
-            self.M_Bin_HR = np.logspace(np.log10(p.halo_mass_bin_min), np.log10(p.halo_mass_bin_max), p.HR_binning, base=10)
 
 
     def solve(self, parameters: Parameters) -> None:
-
-        Mh_history,dMh_dt = mass_accretion(self.z_arr, self.M_Bin, parameters) #shape is [zz, Mass]
-
-        zz = self.z_arr
+        halo_mass, halo_mass_derivative = mass_accretion(self.z_arr, parameters) #shape is [zz, Mass]
         if parameters.solver.fXh == 'constant':
             print('param.solver.fXh is set to constant. We will assume f_X,h = 2e-4**0.225')
-            x_e = np.full(len(zz), 2e-4)
+            x_e = np.full(len(self.z_arr), 2e-4)
         else:
-            zz_, sfrd_ = compute_sfrd(parameters, zz, Mh_history, dMh_dt)
-            sfrd = np.interp(zz, zz_, sfrd_, right=0)
-            Gamma_ion, Gamma_sec_ion = mean_gamma_ion_xray(parameters, sfrd, zz)
+            zz_, sfrd_ = compute_sfrd(parameters, self.z_arr, halo_mass, halo_mass_derivative)
+            sfrd = np.interp(self.z_arr, zz_, sfrd_, right=0)
+            Gamma_ion, Gamma_sec_ion = mean_gamma_ion_xray(parameters, sfrd, self.z_arr)
             self.Gamma_ion = Gamma_ion
             self.Gamma_sec_ion = Gamma_sec_ion
             self.sfrd = np.array((zz_,sfrd_))
-            x_e = solve_xe(parameters, Gamma_ion, Gamma_sec_ion, zz)
+            x_e = solve_xe(parameters, Gamma_ion, Gamma_sec_ion, self.z_arr)
             print('param.solver.fXh is not set to constant. We will compute the free e- fraction x_e and assume fXh = x_e**0.225.')
 
 
-        rho_xray_ = rho_xray(parameters, self.r_grid, Mh_history, dMh_dt,x_e, zz)
-        rho_heat_ = rho_heat(parameters, self.r_grid, rho_xray_, zz)
-        R_bubble_ = R_bubble(parameters, zz,Mh_history,dMh_dt).clip(min=0) # cMpc/h
+        rho_xray_ = rho_xray(parameters, self.z_arr, self.r_grid, halo_mass, halo_mass_derivative, x_e)
+        rho_heat_ = rho_heat(parameters, self.z_arr, self.r_grid, rho_xray_)
+        R_bubble_ = R_bubble(parameters, self.z_arr, halo_mass, halo_mass_derivative).clip(min=0) # cMpc/h
 
         r_lyal = np.logspace(-5, 2, 1000, base=10)  ##    physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
-        rho_alpha = rho_alpha_profile(parameters, r_lyal,Mh_history,dMh_dt, zz)
+        rho_alpha = rho_alpha_profile(parameters, r_lyal,halo_mass,halo_mass_derivative, self.z_arr)
         self.r_lyal = r_lyal
         self.rho_alpha = rho_alpha
 
@@ -91,23 +82,24 @@ class RadiationProfiles:
        #     rhox_history[str(zz[i])] =rho_xray_[i]
 
         if parameters.simulation.average_profiles_in_bin:
-            Mh_history_HR, dMh_dt_HR = mass_accretion(self.z_arr, self.M_Bin_HR, parameters)
-            self.rho_alpha_HR = rho_alpha_profile(parameters,r_lyal,Mh_history_HR, dMh_dt_HR, zz)
-            self.rho_xray_HR = rho_xray(parameters, self.r_grid,Mh_history_HR, dMh_dt_HR, x_e, zz)
-            self.rho_heat_HR = rho_heat(parameters, self.r_grid, self.rho_xray_HR, zz)
-            self.R_bubble_HR = R_bubble(parameters, zz, Mh_history_HR, dMh_dt_HR).clip(min=0)  # cMpc/h
-            self.Mh_history_HR = Mh_history_HR
-            self.dMh_dt_HR = dMh_dt_HR
+            halo_mass_HR, halo_mass_derivative_HR = mass_accretion(self.z_arr, parameters)
+            self.rho_alpha_HR = rho_alpha_profile(parameters,r_lyal,halo_mass_HR, halo_mass_derivative_HR, self.z_arr)
+            self.rho_xray_HR = rho_xray(parameters, self.r_grid,halo_mass_HR, halo_mass_derivative_HR, x_e, self.z_arr)
+            self.rho_heat_HR = rho_heat(parameters, self.r_grid, self.rho_xray_HR, self.z_arr)
+            self.R_bubble_HR = R_bubble(parameters, self.z_arr, halo_mass_HR, halo_mass_derivative_HR).clip(min=0)  # cMpc/h
+            self.halo_mass_HR = halo_mass_HR
+            self.halo_mass_derivative_HR = halo_mass_derivative_HR
 
         #self.rhox_history = rhox_history
-        self.Mh_history = Mh_history
-        self.dMh_dt = dMh_dt
-        self.z_history = zz
+        # TODO - rename these to be fit snake_case
+        self.Mh_history = halo_mass
+        self.dMh_dt = halo_mass_derivative
+        self.z_history = self.z_arr
         self.R_bubble = R_bubble_     # cMpc/h (zz,M)
         #self.T_history = T_history    # Kelvins
         self.rho_heat = rho_heat_           #shape (z,r,M)
         self.r_grid_cell = self.r_grid
-        self.Ngdot_ion = Ngdot_ion(parameters, zz[:,None], Mh_history,dMh_dt)
+        self.Ngdot_ion = Ngdot_ion(parameters, self.z_arr[:,None], halo_mass,halo_mass_derivative)
 
 
 
@@ -182,7 +174,7 @@ def R_bubble(parameters: Parameters, zz, M_accr,dMh_dt):
 
 
 
-def rho_xray(parameters: Parameters, rr, M_accr, dMdt_accr,xe, zz):
+def rho_xray(parameters: Parameters, zz, rr, M_accr, dMdt_accr, xe):
     """
     Parameters
     ----------
@@ -200,6 +192,7 @@ def rho_xray(parameters: Parameters, rr, M_accr, dMdt_accr,xe, zz):
     Om = parameters.cosmology.Om
     Ob = parameters.cosmology.Ob
     h0 = parameters.cosmology.h
+    # TODO: remove hardcoded values
     zstar = 35
     Emin = parameters.source.energy_cutoff_min_xray
     Emax = parameters.source.energy_cutoff_max_xray
@@ -233,8 +226,6 @@ def rho_xray(parameters: Parameters, rr, M_accr, dMdt_accr,xe, zz):
             z_max = zstar
             zrange = z_max - zz[i]
             N_prime = int(zrange / dz_prime)
-
-
 
             if (N_prime < 4):
                 N_prime = 4
@@ -544,7 +535,7 @@ def solve_xe(parameters: Parameters, mean_G_ion, mean_Gsec_ion, zz):
     return x_e
 
 
-def rho_heat(parameters: Parameters, rr, rho_xray, zz):
+def rho_heat(parameters: Parameters, zz, rr, rho_xray):
     """
     Parameters
     ----------

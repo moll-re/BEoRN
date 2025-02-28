@@ -2,3 +2,5 @@
 # from beorn import parameters
 # from beorn import cosmo
 # ...
+
+from . import logging

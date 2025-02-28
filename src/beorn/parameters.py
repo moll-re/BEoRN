@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Literal, Union
 
 
-
 @dataclass(slots = True)
 class SourceParameters:
     """
@@ -18,6 +17,7 @@ class SourceParameters:
     
     Attributes:
         mass_accretion_model: mass accretion model. Can be EXP or EPS.
+        # TODO modify this to reflect the new model
         mass_accretion_alpha: coefficient for exponential mass accretion
         source_type: str. source type. SED, Ghara, Ross, constant
         energy_min_sed_xray: minimum energy of normalization of xrays in eV
@@ -45,7 +45,7 @@ class SourceParameters:
     """
 
     mass_accretion_model: Literal['EXP', 'EPS'] = 'EXP'
-    mass_accretion_alpha: float = 0.79
+    mass_accretion_alpha_range: np.ndarray = field(default_factory=lambda: np.linspace(0.1, 0.9, 10))
     source_type: Literal['SED', 'Ghara', 'Ross', 'constant'] = 'SED'
     energy_min_sed_xray: int = 500
     energy_max_sed_xray: int = 2000
@@ -69,6 +69,7 @@ class SourceParameters:
     Mp_esc: float = 1e10
     pl_esc: float = 0.0
     min_xHII_value: int = 0
+
 
 
 @dataclass(slots = True)
@@ -139,6 +140,12 @@ class SimulationParameters:
     nGrid_min_heat: int = 4
     nGrid_min_lyal: int = 16
     random_seed: int = 12345
+
+
+    @property
+    def halo_mass_bins(self) -> np.ndarray:
+        return np.logspace(np.log10(self.halo_mass_bin_min), np.log10(self.halo_mass_bin_max), self.halo_mass_bin_n, base=10)    
+
 
 
 @dataclass(slots = True)
