@@ -163,24 +163,25 @@ def compute_glob_qty(parameters: Parameters):
             'xcoll': xcoll_arr}
 
 
-def compute_sfrd(param, zz_, Maccr, dM_dt_accr):
-    model_name = param.sim.model_name
+def compute_sfrd(parameters: Parameters, zz_, Maccr, dM_dt_accr):
+    # TODO - this has not been updated to the new shape of Maccr
+    model_name = parameters.simulation.model_name
     if os.path.exists('./physics/sfrd_' + model_name + '.txt'):
         print('Reading SFRD from ./physics/sfrd_' + model_name + '.txt')
         data = np.loadtxt('./physics/sfrd_' + model_name + '.txt')
         zz, sfrd = data[0], data[1]
     else:
         print('Computing the SFRD [(Msol/h) / yr /(cMpc/h)**3] from halo catalogs and source models parameters....')
-        LBox = param.sim.Lbox  # Mpc/h
-        M_Bin = np.logspace(np.log10(param.sim.Mh_bin_min), np.log10(param.sim.Mh_bin_max), param.sim.binn, base=10)
+        LBox = parameters.simulation.Lbox  # Mpc/h
+        M_Bin = parameters.simulation.halo_mass_bins
 
         zz = []
         sfrd = []
 
-        z_arr = def_redshifts(param)
+        z_arr = def_redshifts(parameters)
         for ii, z in enumerate(z_arr):
             z_str = z_string_format(z)
-            halo_catalog = load_halo(param, z_str)
+            halo_catalog = load_halo(parameters, z_str)
             H_Masses = halo_catalog['M']
             z = halo_catalog['z']
             ind_z = np.argmin(np.abs(zz_ - z))
@@ -199,9 +200,9 @@ def compute_sfrd(param, zz_, Maccr, dM_dt_accr):
                 print('WARNING : you may want to use a higher param.source.Mh_bin_max.')
             ### if bins[0] is 1, it means H_Masses[0] is between Mh_bin_array[0] and Mh_bin_array[1]. Therefore is takes the profile of M_Bin[0]
 
-            dMstar_dt = dM_dt_accr[ind_z, :] * f_star_Halo(param,
-                                                           Mh_z_bin) * param.cosmo.Ob / param.cosmo.Om  # param.source.alpha_MAR * Mh_z_bin * (z + 1) * Hubble(z, param) * f_star_Halo(param, Mh_z_bin)
-            dMstar_dt[np.where(Mh_z_bin < param.source.M_min)] = 0
+            dMstar_dt = dM_dt_accr[ind_z, :] * f_star_Halo(parameters,
+                                                           Mh_z_bin) * parameters.cosmo.Ob / parameters.cosmo.Om  # param.source.alpha_MAR * Mh_z_bin * (z + 1) * Hubble(z, param) * f_star_Halo(param, Mh_z_bin)
+            dMstar_dt[np.where(Mh_z_bin < parameters.source.M_min)] = 0
 
             SFRD = np.sum(number_per_bins * dMstar_dt[bins_clipped - 1])
 
