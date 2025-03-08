@@ -7,6 +7,7 @@ from scipy.integrate import odeint
 import logging
 logger = logging.getLogger(__name__)
 
+from .constants import sec_per_year, km_per_Mpc
 from .cosmo import D, hubble, Hubble
 from .halomassfunction import HaloMassFunction
 from .parameters import Parameters
@@ -34,6 +35,7 @@ def mass_accretion_EPS(z_bins, parameters: Parameters):
     Returns :
     Mh and dMh_dt, two 2D arrays of shape (zz, mm)
     """
+    # TODO this has not been updated to the new alpha parameter
     z_bins = np.flip(z_bins) # flip the z array so that it increases : zz = 6...25 etc. This way we solve the evolution of h masses backward in time, since M_Bin is defined as the h masses at the final redshift.
     m_bins = parameters.simulation.halo_mass_bins
     aa = 1 / (z_bins + 1)
@@ -95,7 +97,7 @@ def mass_accretion_EXP(z_bins: np.ndarray, parameters: Parameters) -> tuple[np.n
     m_bins = parameters.simulation.halo_mass_bins
     alpha_bins = parameters.source.mass_accretion_alpha_range
     z_initial = z_bins.min()
-    logger.debug(f"Using {m_bins.shape=}, {alpha_bins.shape=} and {m_bins.shape=}")
+    logger.debug(f"Using {m_bins.shape=}, {alpha_bins.shape=} and {z_bins.shape=}")
 
     halo_mass = m_bins[:, None, None] * np.exp(alpha_bins[None, :, None] * (z_initial - z_bins[None, None, :]))
     logger.debug(f"{halo_mass.shape=}")

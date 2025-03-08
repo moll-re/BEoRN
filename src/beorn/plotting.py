@@ -4,13 +4,14 @@ Bunch of python functions useful to plot, load, read in...
 import numpy as np
 import matplotlib
 from matplotlib import pyplot as plt
+import logging
+logger = logging.getLogger(__name__)
 
 from .constants import *
 from .functions import Beta, find_nearest
 from .cosmo import dTb_fct
 from .parameters import Parameters
 from .computing_profiles import RadiationProfiles
-
 
 def Delta_21cm_PS_fixed_k(k,PS,plot=True):
     kk, zz = PS['k'], PS['z']
@@ -519,7 +520,7 @@ Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775
                    343109759067.9875])
 
 
-def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste):
+def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste, alpha_list):
     import warnings
     import matplotlib.pyplot as plt
     from .cosmo import T_adiab
@@ -530,39 +531,46 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
     co_radial_grid = profile.r_grid_cell
     r_lyal_phys = profile.r_lyal
     zz = profile.z_history
+
     Mh_liste = []
-    for ii, zi in enumerate(z_liste):
-        ind_z = np.argmin(np.abs(zz - zi))
+    for i, zi in enumerate(z_liste):
+        for j, alpha_j in enumerate(alpha_list):
 
-        zzi = profile.z_history[ind_z]
-        Mh_i = profile.Mh_history[ind_z, ind_M]
-        print('z, Mh = ', zzi, ', {:.2e}'.format(Mh_i / 0.68))
-        Mh_liste.append(Mh_i / 0.68)
-        T_adiab_z = T_adiab(zzi, parameters)
+            ind_z = np.argmin(np.abs(zz - zi))
 
-        x_HII_profile = np.zeros((len(co_radial_grid)))
-        x_HII_profile[np.where(co_radial_grid < profile.R_bubble[ind_z, ind_M])] = 1
-        Temp_profile = profile.rho_heat[ind_z, :, ind_M] + T_adiab_z
-        lyal_profile = profile.rho_alpha[ind_z, :, ind_M]  # *1.81e11/(1+zzi)
+            zzi = profile.z_history[ind_z]
+            Mh_i = profile.Mh_history[ind_z, ind_M, j]
+            logger.debug(f"{profile.Mh_history.shape=}, {Mh_i.shape=}")
+            # print('z, Mh = ', zzi, ', {:.2e}'.format(Mh_i / 0.68))
+            Mh_liste.append(Mh_i / 0.68)
+            T_adiab_z = T_adiab(zzi, parameters)
 
-        plt.subplot(141)
-        plt.semilogy([zzi], [Mh_i / 0.68], '*', color='C' + str(ii), markersize=13.5)
+            logger.debug(f"{profile.R_bubble.shape=}, {profile.rho_heat.shape=}, {profile.rho_alpha.shape=}")
 
-        plt.subplot(143)
-        plt.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7)
+            x_HII_profile = np.zeros((len(co_radial_grid)))
+            logger.debug(f"{profile.R_bubble[:, ind_z, ind_M, j].shape=}, {co_radial_grid.shape=}")
+            x_HII_profile[np.where(co_radial_grid < profile.R_bubble[:, ind_z, ind_M, j])] = 1
+            Temp_profile = profile.rho_heat[:, ind_z, ind_M, j] + T_adiab_z
+            lyal_profile = profile.rho_alpha[:, ind_z, ind_M, j]  # *1.81e11/(1+zzi)
 
-        plt.subplot(142)
-        plt.loglog(r_lyal_phys * (1 + zzi) / 0.68, lyal_profile, color='C' + str(ii), lw=1.7)
+            plt.subplot(141)
+            plt.semilogy([zzi], [Mh_i / 0.68], '*', color='C' + str(i), markersize=13.5)
 
-        plt.subplot(144)
-        plt.semilogx(co_radial_grid / 0.68, x_HII_profile, color='C' + str(ii), lw=1.7)
+            plt.subplot(143)
+            plt.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7)
+
+            plt.subplot(142)
+            plt.loglog(r_lyal_phys * (1 + zzi) / 0.68, lyal_profile, color='C' + str(i), lw=1.7)
+
+            plt.subplot(144)
+            plt.semilogx(co_radial_grid / 0.68, x_HII_profile, color='C' + str(i), lw=1.7)
 
     plt.subplot(141)
 
     plt.semilogy(z_array_1, Mh_z_1 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
     plt.semilogy(z_array_2, Mh_z_2 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
     plt.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simu (Behroozi +20)')
-    plt.semilogy(zz, profile.Mh_history[:, ind_M] / 0.68, color='gray', alpha=1, lw=2, label='analytical MAR')
+    plt.semilogy(zz, profile.Mh_history[:, ind_M, 1] / 0.68, color='gray', alpha=1, lw=2, label='analytical MAR')
     plt.xlim(15, 5)
     plt.ylim(1.5e8, 8e12)
     plt.xlabel('z', fontsize=15)

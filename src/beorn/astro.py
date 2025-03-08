@@ -72,7 +72,7 @@ def f_star_Halo(parameters: Parameters, Mh):
     return fstar
 
 
-def f_esc(param,Mh):
+def f_esc(parameters: Parameters ,Mh):
     """
     Parameters
     ----------
@@ -84,14 +84,14 @@ def f_esc(param,Mh):
     Escape fraction of ionising photons
     """
 
-    f0  = param.source.f0_esc
-    Mp  = param.source.Mp_esc
-    pl  = param.source.pl_esc
+    f0  = parameters.source.f0_esc
+    Mp  = parameters.source.Mp_esc
+    pl  = parameters.source.pl_esc
     fesc = f0 * (Mp / Mh) ** pl
-    return np.minimum(fesc,1)
+    return np.minimum(fesc, 1)
 
 
-def f_Xh(param,x_e):
+def f_Xh(parameters: Parameters, x_e):
     """
      Parameters
      ----------
@@ -106,8 +106,7 @@ def f_Xh(param,x_e):
     # C,a,b = 0.9971, 0.2663, 1.3163
     # fXh = C * (1-(1-x_e**a)**b)
     
-    fXh = x_e ** 0.225
-    return fXh
+    return x_e ** 0.225
 
 
 
