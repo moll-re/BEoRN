@@ -82,6 +82,7 @@ def mass_accretion_EPS(z_bins, parameters: Parameters):
 
 
 
+
 def mass_accretion_EXP(z_bins: np.ndarray, parameters: Parameters) -> tuple[np.ndarray, np.ndarray]:
     """
     Computes the halo mass and its derivative with respect to time using the exponential model, using a range of initial halo masses and alpha values.
@@ -97,14 +98,12 @@ def mass_accretion_EXP(z_bins: np.ndarray, parameters: Parameters) -> tuple[np.n
     m_bins = parameters.simulation.halo_mass_bins
     alpha_bins = parameters.source.mass_accretion_alpha_range
     z_initial = z_bins.min()
-    logger.debug(f"Using {m_bins.shape=}, {alpha_bins.shape=} and {z_bins.shape=}")
+    logger.debug(f"Computing mass accretion for a parameter space consisting of: {m_bins.shape=}, {alpha_bins.shape=} and {z_bins.shape=}")
 
     halo_mass = m_bins[:, None, None] * np.exp(alpha_bins[None, :, None] * (z_initial - z_bins[None, None, :]))
-    logger.debug(f"{halo_mass.shape=}")
     halo_mass_derivative = mass_accretion_EXP_derivative(parameters, halo_mass, z_bins)
-    logger.debug(f"{halo_mass_derivative.shape=}")
+    logger.debug(f"{halo_mass.shape=} and {halo_mass_derivative.shape=}")
 
-    plot_halo_mass(halo_mass, halo_mass_derivative, m_bins, z_bins, alpha_bins)
     return halo_mass, halo_mass_derivative
 
 
@@ -124,8 +123,7 @@ def mass_accretion_EXP_derivative(parameters: Parameters, halo_mass: np.ndarray,
     # using the function from above we can formulate an analytical expression for the derivative:
     # dMh/dt = Mh * alpha * H(z) * (z+1)
     alpha_bins = parameters.source.mass_accretion_alpha_range
-    print(((1 + z_bins) * hubble(z_bins, parameters)).shape)
-    return halo_mass * alpha_bins[None, :, None] * ((1 + z_bins) * hubble(z_bins, parameters))[None, None, :]
+    return halo_mass * alpha_bins[None, :, None] * ((1 + z_bins) * Hubble(z_bins, parameters))[None, None, :]
 
 
 def plot_halo_mass(halo_mass: np.ndarray, halo_mass_derivative: np.ndarray, m_bins: np.ndarray, z_bins: np.ndarray, alpha_bins: np.ndarray):

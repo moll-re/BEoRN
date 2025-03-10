@@ -521,94 +521,112 @@ Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775
 
 
 def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste, alpha_list):
-    import warnings
-    import matplotlib.pyplot as plt
     from .cosmo import T_adiab
 
-    warnings.filterwarnings('ignore')
-    plt.subplots(1, 4, figsize=(17, 5))
+    fig, axs = plt.subplots(1, 4, figsize=(17, 5))
 
     co_radial_grid = profile.r_grid_cell
     r_lyal_phys = profile.r_lyal
     zz = profile.z_history
 
-    Mh_liste = []
+    Mh_list = []
+
+    # Plot the 
     for i, zi in enumerate(z_liste):
         for j, alpha_j in enumerate(alpha_list):
+            # # don't plot all alpha values
+            # if j % 2 == 0:
+            #     continue
 
+            # the user specifies the redshifts and alpha values - here we find the closest values in the profile
             ind_z = np.argmin(np.abs(zz - zi))
+            z_val = zz[ind_z]
 
-            zzi = profile.z_history[ind_z]
-            Mh_i = profile.Mh_history[ind_z, ind_M, j]
-            logger.debug(f"{profile.Mh_history.shape=}, {Mh_i.shape=}")
-            # print('z, Mh = ', zzi, ', {:.2e}'.format(Mh_i / 0.68))
-            Mh_liste.append(Mh_i / 0.68)
-            T_adiab_z = T_adiab(zzi, parameters)
+            ind_alpha = np.argmin(np.abs(parameters.source.mass_accretion_alpha_range - alpha_j))
+            alpha_val = parameters.source.mass_accretion_alpha_range[ind_alpha]
+
+            Mh_i = profile.Mh_history[ind_M, ind_alpha, ind_z]
+
+            Mh_list.append(Mh_i / 0.68)
+            T_adiab_z = T_adiab(z_val, parameters)
 
             logger.debug(f"{profile.R_bubble.shape=}, {profile.rho_heat.shape=}, {profile.rho_alpha.shape=}")
 
             x_HII_profile = np.zeros((len(co_radial_grid)))
-            logger.debug(f"{profile.R_bubble[:, ind_z, ind_M, j].shape=}, {co_radial_grid.shape=}")
-            x_HII_profile[np.where(co_radial_grid < profile.R_bubble[:, ind_z, ind_M, j])] = 1
-            Temp_profile = profile.rho_heat[:, ind_z, ind_M, j] + T_adiab_z
-            lyal_profile = profile.rho_alpha[:, ind_z, ind_M, j]  # *1.81e11/(1+zzi)
+            x_HII_profile[np.where(co_radial_grid < profile.R_bubble[ind_M, ind_alpha, ind_z])] = 1
 
-            plt.subplot(141)
-            plt.semilogy([zzi], [Mh_i / 0.68], '*', color='C' + str(i), markersize=13.5)
+            Temp_profile = profile.rho_heat[:, ind_M, ind_alpha, ind_z] + T_adiab_z
+            lyal_profile = profile.rho_alpha[:, ind_M, ind_alpha, ind_z]  # *1.81e11/(1+zzi)
 
-            plt.subplot(143)
-            plt.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7)
+            ax = axs[0]
+            # TODO - fix marker size
+            ax.scatter(z_val, Mh_i / 0.68, s=15, marker='*', color='C' + str(i))
 
-            plt.subplot(142)
-            plt.loglog(r_lyal_phys * (1 + zzi) / 0.68, lyal_profile, color='C' + str(i), lw=1.7)
+            ax = axs[1]
+            ax.loglog(r_lyal_phys * (1 + z_val) / 0.68, lyal_profile, color='C' + str(i), lw=1.7)
 
-            plt.subplot(144)
-            plt.semilogx(co_radial_grid / 0.68, x_HII_profile, color='C' + str(i), lw=1.7)
+            ax = axs[2]
+            ax.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7)
 
-    plt.subplot(141)
+            ax = axs[3]
+            ax.semilogx(co_radial_grid / 0.68, x_HII_profile, color='C' + str(i), lw=1.7)
 
-    plt.semilogy(z_array_1, Mh_z_1 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
-    plt.semilogy(z_array_2, Mh_z_2 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
-    plt.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simu (Behroozi +20)')
-    plt.semilogy(zz, profile.Mh_history[:, ind_M, 1] / 0.68, color='gray', alpha=1, lw=2, label='analytical MAR')
-    plt.xlim(15, 5)
-    plt.ylim(1.5e8, 8e12)
-    plt.xlabel('z', fontsize=15)
-    plt.ylabel('$M_h$ [M$_\odot$]', fontsize=17)
-    plt.tick_params(axis="both", labelsize=13.5)
-    plt.legend(fontsize=15, loc='upper left')
+    ax = axs[0]
+    logger.debug(f"{alpha_val=}")
+    ax.semilogy(z_array_1, Mh_z_1 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
+    ax.semilogy(z_array_2, Mh_z_2 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
+    ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simu (Behroozi +20)')
+    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label='analytical MAR')
+    ax.set_xlim(15, 5)
+    ax.set_ylim(1.5e8, 8e12)
+    ax.set_xlabel('z')
+    ax.set_ylabel('$M_h$ [$M_{\\odot}$]')
+    ax.tick_params(axis="both", labelsize=13.5)
+    ax.legend(loc='upper left')
 
-    plt.subplot(142)
-    plt.xlim(2e-1, 1e3)
-    plt.ylim(2e-17, 1e-5)
-    plt.loglog([], [], color='C0', label='$z\sim$' + '{},'.format(z_liste[0]) + '$M_{\mathrm{h}}=$' + '{:.2e}'.format(
-        Mh_liste[0]) + '$M_{\odot}$')
-    plt.xlabel('r [cMpc]', fontsize=15)
-    plt.tick_params(axis="both", labelsize=13.5)
-    plt.ylabel('ρ$_{α}$ [$\mathrm{pcm}^{-2}\, \mathrm{s}^{-1} \, \mathrm{Hz}^{-1}$]', fontsize=17)
-    plt.legend(fontsize=13)
+    ax = axs[1]
+    ax.set_xlim(2e-1, 1e3)
+    ax.set_ylim(2e-17, 1e-5)
+    ax.loglog([], [], color='C0', label='$z\\sim$' + '{},'.format(z_liste[0]) + '$M_{\\mathrm{h}}=$' + '{:.2e}'.format(
+        Mh_list[0]) + '$M_{\\odot}$')
+    ax.set_xlabel('r [cMpc]')
+    ax.tick_params(axis="both", labelsize=13.5)
+    ax.set_ylabel('$\\rho_{\\alpha}$ [$\\mathrm{pcm}^{-2}\\, \\mathrm{s}^{-1} \\, \\mathrm{Hz}^{-1}$]')
+    ax.legend()
 
-    plt.subplot(143)
-    plt.xlim(2e-2, 1e2)
-    plt.ylim(0.8, 5e6)
-    plt.loglog([], [], color='C1', label='$z\sim$' + '{},'.format(z_liste[1]) + '$M_{\mathrm{h}}=$' + '{:.2e}'.format(
-        Mh_liste[1]) + '$M_{\odot}$')
-    plt.xlabel('r [cMpc]', fontsize=15)
-    plt.ylabel(' ρ$_{h}$ [K]', fontsize=17)
-    plt.tick_params(axis="both", labelsize=13.5)
-    plt.legend(fontsize=13)
+    ax = axs[2]
+    ax.set_xlim(2e-2, 1e2)
+    # ax.set_ylim(5e25, 1e34)
+    # ax.set_ylim(0.8, 5e6)
+    ax.loglog([], [], color='C1', label='$z \\sim$' + '{},'.format(z_liste[1]) + '$M_{\\mathrm{h}}=$' + '{:.2e}'.format(
+        Mh_list[1]) + '$M_{\\odot}$')
+    ax.set_xlabel('r [cMpc]')
+    ax.set_ylabel('$\\rho_{h}$ [K]')
+    ax.tick_params(axis="both", labelsize=13.5)
+    ax.legend()
 
-    plt.subplot(144)
-    plt.xlim(2e-2, 1e2)
-    plt.ylim(0, 1.2)
-    plt.semilogx([], [], color='C2', label='$z\sim$' + '{},'.format(z_liste[2]) + '$M_{\mathrm{h}}=$' + '{:.2e}'.format(
-        Mh_liste[2]) + '$M_{\odot}$')
-    plt.xlabel('r [cMpc]', fontsize=15)
-    plt.tick_params(axis="both", labelsize=13.5)
-    plt.ylabel(' x$_{\mathrm{HII}}$', fontsize=17)
-    plt.legend(fontsize=13)
+    ax = axs[3]
+    ax.set_xlim(2e-2, 1e2)
+    ax.set_ylim(0, 1.2)
+    ax.semilogx([], [], color='C2', label='$z\\sim$' + '{},'.format(z_liste[2]) + '$M_{\\mathrm{h}}=$' + '{:.2e}'.format(
+        Mh_list[2]) + '$M_{\\odot}$')
+    ax.set_xlabel('r [cMpc]')
+    ax.tick_params(axis="both", labelsize=13.5)
+    ax.set_ylabel('$x_{\\mathrm{HII}}$')
+    ax.legend()
 
     plt.tight_layout()
+
+
+    # plt.figure()
+    # plt.plot(zz, profile.R_bubble[ind_M, ind_alpha, :], label='R_bubble')
+    # plt.show()
+    plt.figure()
+    plt.plot(co_radial_grid / 0.68, profile.rho_xray_[:, ind_M, ind_alpha, 0], label='rho_xray')
+    plt.plot(co_radial_grid / 0.68, profile.rho_xray_[:, ind_M, ind_alpha, 10], label='rho_xray')
+    plt.plot(co_radial_grid / 0.68, profile.rho_xray_[:, ind_M, ind_alpha, -1], label='rho_xray')
+    plt.legend()
+    plt.show()
 
 
 ########### FUNCTIONS TO DO COMPARISON PLOTS WITH ------>HALO MODEL<--------
@@ -848,7 +866,7 @@ def Plotting_PS(k_array, z, physics, PS_Dict, GS, PS, save_loc=None,param=None,p
     axis3.set_ylim(3e-4, 2e0)
     axis3.legend(title='z={}'.format(z), loc='best')
     axis3.set_xlabel('k [h/Mpc]', fontsize=14)
-    axis3.set_ylabel('$\Delta^{2} = k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
+    axis3.set_ylabel(r'$\Delta^{2} = k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
 
     ################################################ PS(z)
     axis4 = fig.add_subplot(424)
@@ -877,7 +895,7 @@ def Plotting_PS(k_array, z, physics, PS_Dict, GS, PS, save_loc=None,param=None,p
     axis4.set_ylim(1e-1, 1e3)
     axis4.set_xlim(6, 20)
 
-    axis4.legend(title='$ k^{3}P(k)/(2\pi^{2})$')  # dTb^{2}
+    axis4.legend(title=r'$k^{3}P(k)/(2\pi^{2})$')  # dTb^{2}
     axis4.set_xlabel('z', fontsize=14)
 
     ################################################ PS_lymanalpha(z)
@@ -918,7 +936,7 @@ def Plotting_PS(k_array, z, physics, PS_Dict, GS, PS, save_loc=None,param=None,p
     axis5.set_ylim(1e-5, 1e1)
     axis5.set_xlim(6, 18)
 
-    axis5.set_ylabel('$\Delta^{2} = k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
+    axis5.set_ylabel(r'$\Delta^{2} = k^{3}P(k)/(2\pi^{2})$', fontsize=14)
 
     axis5.legend(title='lyal PS ')
     axis5.set_xlabel('z', fontsize=14)
@@ -958,7 +976,7 @@ def Plotting_PS(k_array, z, physics, PS_Dict, GS, PS, save_loc=None,param=None,p
     axis7.set_ylim(1e-4, 1e3)
     axis7.set_xlim(6, 22)
 
-    axis7.set_ylabel('$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
+    axis7.set_ylabel(r'$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
 
     axis7.legend(title='TT PS ')
     axis7.set_xlabel('z', fontsize=14)
@@ -983,7 +1001,7 @@ def Plotting_PS(k_array, z, physics, PS_Dict, GS, PS, save_loc=None,param=None,p
 
     axis8.set_xlim(6, 18)
 
-    axis8.set_ylabel('$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
+    axis8.set_ylabel(r'$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$', fontsize=14)
 
     axis8.legend(title='reio-reio PS ')
     axis8.set_xlabel('z', fontsize=14)
@@ -1090,7 +1108,7 @@ def Plotting_PS_GS(k_array, z, physics, PS_Dict, GS, PS, save_loc=None,param=Non
     axis4.set_ylim(1e-1, 1e3)
     axis4.set_xlim(6, 20)
 
-    axis4.legend(title='$ k^{3}P(k)/(2\pi^{2})$')  # dTb^{2}
+    axis4.legend(title=r'$k^{3}P(k)/(2\pi^{2})$')  # dTb^{2}
     axis4.set_xlabel('z', fontsize=14)
 
     if save_loc is not None:
@@ -1127,7 +1145,7 @@ def Plotting_PS_TT(k_array, physics, PS_RT, GS, PS, save_loc=None):
     # axis4.set_ylim(1e-1, 1e3)
     axis4.set_xlim(6, 20)
 
-    axis4.legend(title='$ k^{3}P(k)/(2\pi^{2})$')  # dTb^{2}
+    axis4.legend(title=r'$k^{3}P(k)/(2\pi^{2})$')  # dTb^{2}
     axis4.set_xlabel('z', fontsize=14)
 
     if save_loc is not None:
@@ -1228,7 +1246,7 @@ def plot_FAST_RT_PS_of_z(k, k_values_fast, path_to_FAST_PS, GS_Beorn, PS_Beorn, 
     print('For Beorn, mutliplying by ', option)
     dTb_RT = GS_Beorn[option]
     plt.xlabel('k [1/Mpc]', fontsize=14)
-    plt.ylabel('$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
+    plt.ylabel(r'$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$', fontsize=14)
     plt.semilogy(GS_Beorn['z'], kk ** 3 * dTb_RT ** 2 * PS_dTb_RT / 2 / np.pi ** 2,
                  label='k=' + str(round(k_values_fast[ind_k_fast], 2)) + 'Mpc$^{-1}$' + ' ' + label, color=color, lw=2)
     if RSD:
@@ -1278,7 +1296,7 @@ def plot_PS_fast(z, file, color, ax, Beta=1, label='', qty='xHII', ls='--', alph
     plt.xlabel('k [1/Mpc]')
     plt.ylim(1e-1, 1e3)
     plt.xlim(6, 22)
-    plt.legend(title='$ k^{3}P(k)/(2\pi^{2})$')
+    plt.legend(title=r'$ k^{3}P(k)/(2\pi^{2})$')
     plt.xlabel('z', fontsize=14)
 
 def plot_PS_HM(z, PS, color, ax, label='', qty='rr', with_dTb=False):
@@ -1341,7 +1359,7 @@ def plot_FAST_PS_k(z, z_liste_fast, path_to_deldel, ax, color='b', with_dTb=True
         print(filename)
     ax.legend()
     ax.set_xlabel('k[1/Mpc]', fontsize=13)
-    ax.set_ylabel('$\Delta^{2} $', fontsize=13)
+    ax.set_ylabel(r'$\Delta^{2}$', fontsize=13)
 
 
 def Beta_Beorn(z, GS, qty='xHII'):
@@ -1421,7 +1439,7 @@ def horizontal_plot_for_lightcone(Beorn_GS, Beorn_PS):
             indices_]  # 10**savitzky_golay(np.log10(Beorn_PS['PS_dTb'][:, ind_k]), 11, 3)
         dTb_RT = Beorn_GS['dTb'][indices_]
         plt.xlabel('k [1/Mpc]', fontsize=14)
-        plt.ylabel('$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$   ', fontsize=14)
+        plt.ylabel(r'$\Delta^{2} = dTb^{2} k^{3}P(k)/(2\pi^{2})$', fontsize=14)
         plt.semilogy(1 / (Beorn_GS['z'][indices_] + 1), kk ** 3 * dTb_RT ** 2 * PS_dTb_RT / 2 / np.pi ** 2, lw=5,
                      alpha=0.4, label='k=' + str(round(Beorn_PS['k'][ind_k] * 0.68, 2)) + 'Mpc$^{-1}$')
 
