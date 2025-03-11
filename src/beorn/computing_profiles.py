@@ -297,13 +297,32 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
         # the main component of the emission is given by an integral over the frequency
         # to compute the integral we prepend the nu dependence as the first axis of the flux array (flux[nu, r, Mh, alpha])
 
-        def integrand(nu):
-            tau_prime = cum_optical_depth(z_prime, nu * constants.h_eV_sec, parameters)
-            eps_X = eps_xray(nu[:, None] * (1 + z_prime)[None, :] / (1 + z), parameters)
+        """
+            for ...
+                tau_prime = cum_optical_depth(z_prime, nu[j] * h_eV_sec, param)
+                eps_X = eps_xray(nu[j] * (1 + z_prime) / (1 + zz[i]), param)[:,None] * np.exp(-tau_prime)[:,None] * dMdt_int(z_prime)  # [1/s/Hz]
+                eps_int = interp1d(rcom_prime, eps_X, axis=0, fill_value=0.0, bounds_error=False)
+                flux[j, :,:] = np.array(eps_int(rr))
+
+
+            #fXh =  np.maximum((rho_xe[i]+2e-4)**0.225  ,0.11)    # 1.0 # 0.13 # 0.15 ---> 0.11 matches the f_heat we have in cross_sections.py, for T_neutral
+            #fXh = xe[i]**0.225
+            fXh = f_Xh(param, xe[i])
+
+            pref_nu = ((nH0 / nb0) * sigma_HI(nu * h_eV_sec) * (nu * h_eV_sec - E_HI) + (nHe0 / nb0) * sigma_HeI(nu * h_eV_sec) * (nu * h_eV_sec - E_HeI))   # [cm^2 * eV] 4 * np.pi *
+
+            heat_nu = pref_nu[:, None,None] * flux   # [cm^2*eV/s/Hz]
+            heat_of_r = trapz(heat_nu, nu, axis=0)  # [cm^2*eV/s]
+            rho_xray[i, :,:] = fXh * heat_of_r / (4 * np.pi * (rr/(1+zz[i])) ** 2)[:,None] / (cm_per_Mpc/h0) ** 2  # [eV/s]  1/(rr/(1 + zz[i]))**2
+        """
+
+        def integrand(nu_val):
+            tau_prime = cum_optical_depth(z_prime, nu_val * constants.h_eV_sec, parameters)
+            eps_X = eps_xray(nu_val[:, None] * (1 + z_prime)[None, :] / (1 + z), parameters)
             # both quantities are functions of the frequency and the redshift (2d)
             # logger.debug(f"{eps_X.shape=}, {tau_prime.shape=}")
 
-            sigma_i_nu = sigma_HI(nu * constants.h_eV_sec)
+            sigma_i_nu = sigma_HI(nu_val * constants.h_eV_sec)
             # sigma_i_nu is a function of the frequency (1d)
 
             # final complication - the integrand is expressed in terms of the radial distance
@@ -316,15 +335,13 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
             integral_factors_r = np.moveaxis(integral_factors_r, -1, 1)
 
             # the final integrand is a function of the frequency and the radial distance
-            # logger.debug(f"{nu.shape=}, {sigma_i_nu.shape=}, {np.exp(tau_prime).shape=}, {integral_factors_r.shape=}")
-            return ((nu * constants.h_eV_sec - E_HI) * sigma_i_nu)[:, None, None, None] * integral_factors_r
+            prefactor = ((nH0 / nb0) * sigma_HI(nu_val * h_eV_sec) * (nu_val * h_eV_sec - E_HI) + (nHe0 / nb0) * sigma_HeI(nu_val * h_eV_sec) * (nu_val * h_eV_sec - E_HeI))   # [cm^2 * eV] 4 * np.pi *
+            return prefactor[:, None, None, None] * integral_factors_r
         
-        prefactor = ((nH0 / nb0) * sigma_HI(nu * h_eV_sec) * (nu * h_eV_sec - E_HI) + (nHe0 / nb0) * sigma_HeI(nu * h_eV_sec) * (nu * h_eV_sec - E_HeI))   # [cm^2 * eV] 4 * np.pi *
-        flux = prefactor[:, None, None, None] * integrand(nu)
-        integrated_flux = trapezoid(flux, nu, axis=0)
+        integrated_flux = trapezoid(integrand(nu), nu, axis=0)
         heat = integrated_flux
         fXh = f_Xh(parameters, xe[i])
-        rho = fXh * 1 / (4 * np.pi * (rr/(1+z)) ** 2)[:, None, None] * heat
+        rho = fXh * 1 / (4 * np.pi * (rr/(1+z)) ** 2)[:, None, None] * heat / (cm_per_Mpc/h0) ** 2
         # logger.debug(f"{fXh.shape=}, {rr.shape=}, {nu.shape=}, {rho.shape=}")
         rho_xray[..., i] = rho
 

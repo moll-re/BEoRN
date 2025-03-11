@@ -128,6 +128,7 @@ def mass_accretion_EXP_derivative(parameters: Parameters, halo_mass: np.ndarray,
 
 def plot_halo_mass(halo_mass: np.ndarray, halo_mass_derivative: np.ndarray, m_bins: np.ndarray, z_bins: np.ndarray, alpha_bins: np.ndarray):
     import matplotlib.pyplot as plt
+    print(f"{halo_mass.shape=}, {halo_mass_derivative.shape=}, {m_bins.shape=}, {z_bins.shape=}, {alpha_bins.shape=}")
 
     m_bin = 20
     plt.figure()
