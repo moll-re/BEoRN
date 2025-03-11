@@ -529,104 +529,107 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
     r_lyal_phys = profile.r_lyal
     zz = profile.z_history
 
+    logger.debug(f"{profile.R_bubble.shape=}, {profile.rho_heat.shape=}, {profile.rho_alpha.shape=}")
     Mh_list = []
 
     # Plot the 
     for i, zi in enumerate(z_liste):
         for j, alpha_j in enumerate(alpha_list):
-            # # don't plot all alpha values
-            # if j % 2 == 0:
-            #     continue
-
-            # the user specifies the redshifts and alpha values - here we find the closest values in the profile
+            # the user specifies the redshifts and alpha values - here we find the index lying closest to these values in the profile
             ind_z = np.argmin(np.abs(zz - zi))
             z_val = zz[ind_z]
 
             ind_alpha = np.argmin(np.abs(parameters.source.mass_accretion_alpha_range - alpha_j))
             alpha_val = parameters.source.mass_accretion_alpha_range[ind_alpha]
 
+            # the mass history is now uniquely defined:
             Mh_i = profile.Mh_history[ind_M, ind_alpha, ind_z]
-
             Mh_list.append(Mh_i / 0.68)
-            T_adiab_z = T_adiab(z_val, parameters)
 
-            logger.debug(f"{profile.R_bubble.shape=}, {profile.rho_heat.shape=}, {profile.rho_alpha.shape=}")
+            # some quantities are required to plot sensible profiles
+            T_adiab_z = T_adiab(z_val, parameters)
+            Temp_profile = profile.rho_heat[:, ind_M, ind_alpha, ind_z] + T_adiab_z
 
             x_HII_profile = np.zeros((len(co_radial_grid)))
             x_HII_profile[np.where(co_radial_grid < profile.R_bubble[ind_M, ind_alpha, ind_z])] = 1
 
-            Temp_profile = profile.rho_heat[:, ind_M, ind_alpha, ind_z] + T_adiab_z
             lyal_profile = profile.rho_alpha[:, ind_M, ind_alpha, ind_z]  # *1.81e11/(1+zzi)
 
+            ## plot each profile on its own axis
+            # the color is determined by the redshift and alpha values
+            # for increasing redshifts the color is changing from blue to red
+            # for increasing alpha values the opacity is changing from faint to strong
+            color = plt.cm.coolwarm((len(z_liste) - i) / len(z_liste))
+            # TODO - this does not yet look good
+            alpha = 1 - 0.5 * j / len(alpha_list)
+
+            # the label is the same for all profiles
+            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_i:.2e}$ $\\alpha = {alpha_val}$"
+
+
             ax = axs[0]
-            # TODO - fix marker size
-            ax.scatter(z_val, Mh_i / 0.68, s=15, marker='*', color='C' + str(i))
+            ax.scatter(z_val, Mh_i / 0.68, s=150, marker='*', color=color, alpha=alpha)
 
             ax = axs[1]
-            ax.loglog(r_lyal_phys * (1 + z_val) / 0.68, lyal_profile, color='C' + str(i), lw=1.7)
+            ax.loglog(r_lyal_phys * (1 + z_val) / 0.68, lyal_profile, lw=1.7, color=color, alpha=alpha, label=label)
 
             ax = axs[2]
-            ax.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7)
+            ax.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7, color=color, alpha=alpha)
 
             ax = axs[3]
-            ax.semilogx(co_radial_grid / 0.68, x_HII_profile, color='C' + str(i), lw=1.7)
+            ax.semilogx(co_radial_grid / 0.68, x_HII_profile, lw=1.7, color=color, alpha=alpha)
 
+
+    # plot the simulation data (and add one legend)
     ax = axs[0]
-    logger.debug(f"{alpha_val=}")
     ax.semilogy(z_array_1, Mh_z_1 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
     ax.semilogy(z_array_2, Mh_z_2 / 0.68, color='gold', ls='--', lw=3, alpha=0.8)
-    ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simu (Behroozi +20)')
-    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label='analytical MAR')
+    ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simulation (Behroozi +20)')
+
+    # plot our analytical data (and add one legend)
+    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {alpha_list[0]}$')
+
+    # style the plot
     ax.set_xlim(15, 5)
     ax.set_ylim(1.5e8, 8e12)
     ax.set_xlabel('z')
-    ax.set_ylabel('$M_h$ [$M_{\\odot}$]')
-    ax.tick_params(axis="both", labelsize=13.5)
-    ax.legend(loc='upper left')
+    ax.set_ylabel(r'$M_h$ [$M_{\odot}$]')
+    ax.tick_params(axis="both")
+    # ax.legend(loc='upper left')
 
+    # style the other subplots and distribute the legend across all subplots by plotting an empty line
     ax = axs[1]
     ax.set_xlim(2e-1, 1e3)
     ax.set_ylim(2e-17, 1e-5)
-    ax.loglog([], [], color='C0', label='$z\\sim$' + '{},'.format(z_liste[0]) + '$M_{\\mathrm{h}}=$' + '{:.2e}'.format(
-        Mh_list[0]) + '$M_{\\odot}$')
+    # ax.loglog([], [], color='C0', label=fr'$z \sim$ {z_liste[0]}, $M_{{h}}= {Mh_list[0]:.2e}$')
     ax.set_xlabel('r [cMpc]')
-    ax.tick_params(axis="both", labelsize=13.5)
-    ax.set_ylabel('$\\rho_{\\alpha}$ [$\\mathrm{pcm}^{-2}\\, \\mathrm{s}^{-1} \\, \\mathrm{Hz}^{-1}$]')
-    ax.legend()
+    ax.tick_params(axis="both")
+    ax.set_ylabel(r'$\rho_{\alpha}$ [$\mathrm{pcm}^{-2}\, \mathrm{s}^{-1} \, \mathrm{Hz}^{-1}$]')
+    # ax.legend()
 
     ax = axs[2]
     ax.set_xlim(2e-2, 1e2)
-    # ax.set_ylim(5e25, 1e34)
-    # ax.set_ylim(0.8, 5e6)
-    ax.loglog([], [], color='C1', label='$z \\sim$' + '{},'.format(z_liste[1]) + '$M_{\\mathrm{h}}=$' + '{:.2e}'.format(
-        Mh_list[1]) + '$M_{\\odot}$')
+    ax.set_ylim(0.8, 5e6)
+    # ax.loglog([], [], color='C1', label=fr'$z \sim$ {z_liste[1]}, $M_{{h}} = {Mh_list[1]:.2e}$')
     ax.set_xlabel('r [cMpc]')
-    ax.set_ylabel('$\\rho_{h}$ [K]')
-    ax.tick_params(axis="both", labelsize=13.5)
-    ax.legend()
+    ax.set_ylabel(r'$\rho_{h}$ [K]')
+    ax.tick_params(axis="both")
+    # ax.legend()
 
     ax = axs[3]
     ax.set_xlim(2e-2, 1e2)
     ax.set_ylim(0, 1.2)
-    ax.semilogx([], [], color='C2', label='$z\\sim$' + '{},'.format(z_liste[2]) + '$M_{\\mathrm{h}}=$' + '{:.2e}'.format(
-        Mh_list[2]) + '$M_{\\odot}$')
+    # ax.semilogx([], [], color='C2', label=fr'$z \sim$ {z_liste[2]}, $M_{{h}} = {Mh_list[2]:.2e}$')
     ax.set_xlabel('r [cMpc]')
-    ax.tick_params(axis="both", labelsize=13.5)
-    ax.set_ylabel('$x_{\\mathrm{HII}}$')
-    ax.legend()
+    ax.tick_params(axis="both")
+    ax.set_ylabel(r'$x_{\mathrm{HII}}$')
+    # ax.legend()
 
-    plt.tight_layout()
+    fig.legend(loc=7)
+    fig.tight_layout()
+    fig.subplots_adjust(right=0.8)
+    fig.show()
 
-
-    # plt.figure()
-    # plt.plot(zz, profile.R_bubble[ind_M, ind_alpha, :], label='R_bubble')
-    # plt.show()
-    plt.figure()
-    plt.plot(co_radial_grid / 0.68, profile.rho_xray_[:, ind_M, ind_alpha, 0], label='rho_xray')
-    plt.plot(co_radial_grid / 0.68, profile.rho_xray_[:, ind_M, ind_alpha, 10], label='rho_xray')
-    plt.plot(co_radial_grid / 0.68, profile.rho_xray_[:, ind_M, ind_alpha, -1], label='rho_xray')
-    plt.legend()
-    plt.show()
 
 
 ########### FUNCTIONS TO DO COMPARISON PLOTS WITH ------>HALO MODEL<--------
