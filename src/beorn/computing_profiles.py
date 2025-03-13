@@ -297,38 +297,21 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
         # the main component of the emission is given by an integral over the frequency
         # to compute the integral we prepend the nu dependence as the first axis of the flux array (flux[nu, r, Mh, alpha])
 
-        """
-            for ...
-                tau_prime = cum_optical_depth(z_prime, nu[j] * h_eV_sec, param)
-                eps_X = eps_xray(nu[j] * (1 + z_prime) / (1 + zz[i]), param)[:,None] * np.exp(-tau_prime)[:,None] * dMdt_int(z_prime)  # [1/s/Hz]
-                eps_int = interp1d(rcom_prime, eps_X, axis=0, fill_value=0.0, bounds_error=False)
-                flux[j, :,:] = np.array(eps_int(rr))
 
+        def integrand(nu_val: np.ndarray):
+            # In the following we will always keep the nu_val in the 0th axis of the resulting array
 
-            #fXh =  np.maximum((rho_xe[i]+2e-4)**0.225  ,0.11)    # 1.0 # 0.13 # 0.15 ---> 0.11 matches the f_heat we have in cross_sections.py, for T_neutral
-            #fXh = xe[i]**0.225
-            fXh = f_Xh(param, xe[i])
-
-            pref_nu = ((nH0 / nb0) * sigma_HI(nu * h_eV_sec) * (nu * h_eV_sec - E_HI) + (nHe0 / nb0) * sigma_HeI(nu * h_eV_sec) * (nu * h_eV_sec - E_HeI))   # [cm^2 * eV] 4 * np.pi *
-
-            heat_nu = pref_nu[:, None,None] * flux   # [cm^2*eV/s/Hz]
-            heat_of_r = trapz(heat_nu, nu, axis=0)  # [cm^2*eV/s]
-            rho_xray[i, :,:] = fXh * heat_of_r / (4 * np.pi * (rr/(1+zz[i])) ** 2)[:,None] / (cm_per_Mpc/h0) ** 2  # [eV/s]  1/(rr/(1 + zz[i]))**2
-        """
-
-        def integrand(nu_val):
             tau_prime = cum_optical_depth(z_prime, nu_val * constants.h_eV_sec, parameters)
-            eps_X = eps_xray(nu_val[:, None] * (1 + z_prime)[None, :] / (1 + z), parameters)
-            # both quantities are functions of the frequency and the redshift (2d)
-            # logger.debug(f"{eps_X.shape=}, {tau_prime.shape=}")
+            # tau_prime has a redshift component and the nu component (2d)
 
-            sigma_i_nu = sigma_HI(nu_val * constants.h_eV_sec)
-            # sigma_i_nu is a function of the frequency (1d)
+            nu_prime = nu_val[:, None] * ((1 + z_prime) / (1 + z))[None, :]
+            eps_X = eps_xray(nu_prime, parameters)
+            # eps_X has a redshift component and the nu component (2d)
 
-            # final complication - the integrand is expressed in terms of the radial distance
+            # complication - the integrand is expressed in terms of the radial distance
             # we perform a hack to interpret eps(z) as a function of r
-            # the mass also had an M0, alpha dependence, so we add a dimension
-            integral_factors = (np.exp(tau_prime) * eps_X)[:,  None, None, :] * dMdt_int(z_prime)[None, ...]
+            # the mass also had an M0, alpha dependence, so we the missing axis
+            integral_factors = (np.exp(- tau_prime) * eps_X)[:,  None, None, :] * dMdt_int(z_prime)[None, ...]
             integral_factors_interpolated = interp1d(rcom_prime, integral_factors, axis=-1, fill_value=0.0, bounds_error=False)
             # but r should be the first axis after nu: 0, 1, 2, 3 -> 0, 3, 1, 2
             integral_factors_r = integral_factors_interpolated(rr)
@@ -716,7 +699,12 @@ def cum_optical_depth(zz, E, parameters: Parameters):
     dldz = c_km_s*h0/hubble(zz, parameters)/(1+zz) # [Mpc/h]
 
     #integrate
-    tau_int = dldz * (nHI*sHI + nHeI*sHeI)
+    # logger.debug(f"{nHI.shape=}, {sHI.shape=}, {nHeI.shape=}, {sHeI.shape=}")
+    if isinstance(E, np.ndarray):
+        tau_int = dldz[None, :] * (nHI[None, :] * sHI + nHeI[None, :] * sHeI)
+    else:
+        tau_int = dldz * (nHI*sHI + nHeI*sHeI)
+    # logger.debug(f"{dldz.shape=}, {tau_int.shape=}")
     # make sure to integrate along z (axis=-1)
     tau = cumulative_trapezoid(tau_int, x=zz, initial = 0.0, axis = -1)
 
@@ -759,6 +747,7 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
         if z > z_star:
             continue
 
+
         flux = []
         # TODO - handle this in a vectorized way
         for k in range(2, rectrunc):
@@ -768,30 +757,24 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
             # we cast to int later on because this gives the number of points
             N_prime = np.maximum(N_prime, 4).astype(int) # TODO explain why 4 exactly
             # logger.debug(f"{N_prime=}")
-            # the lookback time to TODO what?
             z_prime = np.logspace(np.log(z), np.log(z_max), N_prime, base=np.e)
             rcom_prime = comoving_distance(z_prime, parameters) * h0  # comoving distance in [cMpc/h]
 
             # since we require slightly altered valus of the halo mass at z' (instead of z) we interpolate the values
-            halo_mass_interpolated = interp1d(z_bins[:i + 1], halo_mass[..., :i+1], axis=-1, fill_value='extrapolate')
-            halo_mass_derivative_interpolated = interp1d(z_bins[:i + 1], halo_mass_derivative[..., :i+1], axis=-1, fill_value='extrapolate')
-            # What follows is the emissivity of the source at z_prime (such that at z the photon is at rcom_prime)
-            # We then interpolate to find the correct emissivity such that the photon is at r_grid*(1+z) (in comoving unit)
-
             dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om  # SFR Msol/h/yr
             # logger.debug(f"{dMdt_star.shape=}")
             dMdt_star_int = interp1d(
                 # TODO - original code prepends a value of zero at zstar
                 z_bins[:i + 1],
                 dMdt_star[..., :i+1],
-                axis=-1,
-                fill_value='extrapolate'
+                axis = -1,
+                fill_value = 'extrapolate'
             )
 
             eps_al = eps_lyal(nu_n[k] * (1 + z_prime) / (1 + z), parameters) * dMdt_star_int(z_prime)  # [photons.yr-1.Hz-1]
             # we are now using the lookback time interchangebly as travel distance r (comoving)
             # this should be the first axis 0 1 2 -> 2 0 1
-            eps_al = np.swapaxes(np.swapaxes(eps_al, 0, 2), 1, 2)
+            eps_al = np.moveaxis(eps_al, 2, 0)
             eps_int = interp1d(rcom_prime, eps_al, axis=0, fill_value=0.0, bounds_error=False)
 
             flux_m = eps_int(r_grid * (1 + z)) * rec['f'][ k]  # want to find the z' corresponding to comoving distance r_grid * (1 + z).
