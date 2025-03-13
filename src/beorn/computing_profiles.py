@@ -72,7 +72,6 @@ class RadiationProfiles:
             x_e = solve_xe(parameters, Gamma_ion, Gamma_sec_ion, self.z_arr)
             logger.info('param.solver.fXh is not set to constant. We will compute the free e- fraction x_e and assume fXh = x_e**0.225.')
 
-
         logger.info(f"Computing profiles for {len(self.z_arr)} redshifts")
         R_bubble_ = R_bubble(parameters, self.z_arr, halo_mass, halo_mass_derivative).clip(min=0) # cMpc/h
 
@@ -733,8 +732,8 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
     rec = np.genfromtxt(path_to_file, usecols=(0, 1), comments='#', dtype=float, names=names)
 
     # line frequencies
-    nu_n = nu_LL * (1 - 1 / rec['n'][2:] ** 2)
-    nu_n = np.insert(nu_n, [0, 0], np.inf)
+    nu_n = nu_LL * (1 - 1 / rec['n'] ** 2)
+    nu_n[nu_n == -np.inf] = 0
 
     rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range), len(z_bins)))
 
@@ -747,40 +746,42 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
         if z > z_star:
             continue
 
+        z_max = (1 - (rec['n'] + 1) ** (-2)) / (1 - (rec['n']) ** (-2)) * (1 + z) - 1
+        z_max[z_max == np.inf] = 0
+        z_range = np.minimum(z_max, z_star) - z
+        N_prime = z_range / dz_prime
+        # we cast to int later on because this gives the number of points
+        N_prime = np.maximum(N_prime.max(), 4).astype(int) # TODO explain why 4 exactly
+        z_prime = np.logspace(np.log(z), np.log(z_max.max()), N_prime, base=np.e)
+        # logger.debug(f"{z_prime.shape=}")
 
-        flux = []
-        # TODO - handle this in a vectorized way
-        for k in range(2, rectrunc):
-            z_max = (1 - (rec['n'][k] + 1) ** (-2)) / (1 - (rec['n'][k]) ** (-2)) * (1 + z) - 1
-            z_range = np.minimum(z_max, z_star) - z
-            N_prime = z_range / dz_prime
-            # we cast to int later on because this gives the number of points
-            N_prime = np.maximum(N_prime, 4).astype(int) # TODO explain why 4 exactly
-            # logger.debug(f"{N_prime=}")
-            z_prime = np.logspace(np.log(z), np.log(z_max), N_prime, base=np.e)
+        dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om  # SFR Msol/h/yr
+        # logger.debug(f"{dMdt_star.shape=}")
+        dMdt_star_int = interp1d(
+            # TODO - original code prepends a value of zero at zstar
+            z_bins[:i + 1],
+            dMdt_star[..., :i+1],
+            axis = -1,
+            fill_value = 'extrapolate'
+        )
+        
+        def sum_factors(nu_val: np.ndarray):
             rcom_prime = comoving_distance(z_prime, parameters) * h0  # comoving distance in [cMpc/h]
-
+            # logger.debug(f"{rcom_prime.shape=}, {z_prime.shape=}")
             # since we require slightly altered valus of the halo mass at z' (instead of z) we interpolate the values
-            dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om  # SFR Msol/h/yr
-            # logger.debug(f"{dMdt_star.shape=}")
-            dMdt_star_int = interp1d(
-                # TODO - original code prepends a value of zero at zstar
-                z_bins[:i + 1],
-                dMdt_star[..., :i+1],
-                axis = -1,
-                fill_value = 'extrapolate'
-            )
-
-            eps_al = eps_lyal(nu_n[k] * (1 + z_prime) / (1 + z), parameters) * dMdt_star_int(z_prime)  # [photons.yr-1.Hz-1]
+            nu_prime = nu_val[:, None] * ((1 + z_prime) / (1 + z))[None, :]
+            eps_al = eps_lyal(nu_prime, parameters)[:,  None, None, :] * dMdt_star_int(z_prime)[None, ...]  # [photons.yr-1.Hz-1]
+            # logger.debug(f"{eps_al.shape=}")
+            eps_int = interp1d(rcom_prime, eps_al, axis=-1, fill_value=0.0, bounds_error=False)
+            flux_int = eps_int(r_grid * (1 + z))
             # we are now using the lookback time interchangebly as travel distance r (comoving)
-            # this should be the first axis 0 1 2 -> 2 0 1
-            eps_al = np.moveaxis(eps_al, 2, 0)
-            eps_int = interp1d(rcom_prime, eps_al, axis=0, fill_value=0.0, bounds_error=False)
+            # this should be the second axis (after the nu dependence) 0 1 2 3 -> 0 3 1 2
+            flux_r = np.moveaxis(flux_int, 3, 1)
+            # logger.debug(f"{flux_r.shape=}, {rec['f'].shape=}")
+            # want to find the z' corresponding to comoving distance r_grid * (1 + z).
+            return flux_r * rec['f'][:, None, None, None]
 
-            flux_m = eps_int(r_grid * (1 + z)) * rec['f'][ k]  # want to find the z' corresponding to comoving distance r_grid * (1 + z).
-            flux += [np.array(flux_m)]
-        flux = np.array(flux)
-        flux_of_r = np.sum(flux, axis=0)  # shape is (r_grid, Mbin, alpha_bin)
+        flux_of_r = np.sum(sum_factors(nu_n)[2:rectrunc, ...], axis=0)  # shape is (r_grid, Mbin, alpha_bin)
         rho_alpha_ = flux_of_r / (4 * np.pi * r_grid ** 2)[:, None, None]  ## physical flux in [(pMpc/h)-2.yr-1.Hz-1]
 
         rho_alpha[..., i] = rho_alpha_ * (h0 / cm_per_Mpc) ** 2 / sec_per_year  # [pcm-2.s-1.Hz-1]
