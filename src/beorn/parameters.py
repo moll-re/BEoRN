@@ -6,9 +6,10 @@ Slots are used to prevent the creation of new attributes. This is useful to avoi
 from pathlib import Path
 import importlib
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Literal, Union
 
+import hashlib
 
 @dataclass(slots = True)
 class SourceParameters:
@@ -250,3 +251,32 @@ class Parameters:
     simulation: SimulationParameters = field(default_factory = SimulationParameters)
     excursion_set: ExcursionSetParameters = field(default_factory = ExcursionSetParameters)
     halo_mass_function: HaloMassFunctionParameters = field(default_factory = HaloMassFunctionParameters)
+
+
+    def unique_hash(self) -> str:
+        """
+        Generates a unique hash for the current set of parameters. This can be used as a unique key when caching the computations.
+        """
+        hash_list = []
+        # loops over all (even nested) members and replaces them by hashable types
+        for k in self.__dataclass_fields__.keys():
+            value = getattr(self, k)
+            if is_dataclass(value):
+                for kk in value.__dataclass_fields__.keys():
+                    v = getattr(value, kk)
+                    hash_list.append(make_hashable(v))
+            else:
+                hash_list.append(make_hashable(value))
+        return hashlib.md5(str(hash_list).encode()).hexdigest()
+
+def make_hashable(item):
+    if isinstance(item, np.ndarray):
+        return item.tostring()
+    elif isinstance(item, list):
+        return str(item)
+    elif isinstance(item, dict):
+        return frozenset(item.items())
+    elif isinstance(item, Path):
+        return item.as_posix()
+    else:
+        return item
