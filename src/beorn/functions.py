@@ -21,6 +21,7 @@ def save_f(file, obj):
 
 
 def load_halo(parameters: Parameters, z_str):
+    # TODO - loading the halo could be implemented in the parameter data class
     """
     Load a halo catalog. Should be a pickle dictionnary. With 'M', 'X', 'Y', 'Z', and redshift 'z'.
     The halo catalogs should be in param.sim.halo_catalogs and end up with z_string
@@ -297,6 +298,7 @@ def Beta(zz, PS, qty='Tk'):
         print('qty should be either Tk, lyal, or reio.')
 
 
+# TODO - don't redefine these
 def cross_PS(arr1, arr2, box_dims, kbins):
     return t2c.power_spectrum.cross_power_spectrum_1d(arr1, arr2, box_dims=box_dims, kbins=kbins)
 
@@ -527,10 +529,5 @@ def gather_files(parameters: Parameters, path, z_arr, Ncell, remove=True):
         dd['k'] = data_z['k']
 
     save_f(file= path + str(Ncell) + '_' + parameters.simulation.model_name + '.pkl', obj=dd)
-
-
-
-
-
 
 

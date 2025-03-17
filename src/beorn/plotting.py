@@ -587,7 +587,7 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
     ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simulation (Behroozi +20)')
 
     # plot our analytical data (and add one legend)
-    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {alpha_list[0]}$')
+    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {alpha_list[0]:.2}$')
 
     # style the plot
     ax.set_xlim(15, 5)

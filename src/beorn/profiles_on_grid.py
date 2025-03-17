@@ -8,7 +8,6 @@ from astropy.convolution import convolve_fft
 from .cloud_in_cell import CIC_coefficients
 from .parameters import Parameters
 
-
 def log_binning(array1, array2):
     """
      Parameters
@@ -35,7 +34,6 @@ def bin_edges_log(array):
      -------
      An array whose bins centers correspond to the values of array1, with log scaling.
     """
-
     Mh_bin_array = np.concatenate(([array[0] / 2], np.sqrt(array[1:] * array[:-1]), [2 * array[-1]]))
     return Mh_bin_array
 
@@ -59,32 +57,30 @@ def average_profile(parameters: Parameters, profile, Mh_, ind_z, i):
     """
     # i : indice of the coarse mass bin
     if parameters.simulation.average_profiles_in_bin:
-        Mh_history_HR = profile.Mh_history_HR
-        R_bubble_HR = profile.R_bubble_HR[ind_z, :]
-
+        Mh_history_HR = profile.halo_mass_HR
         # if Mh_ is digitized to M_bin_edges[i] it means it should take the value of M_Bin[i-1] (bin 0 is what's on the left...)
         # Mh_history_HR       0.   1.    2.    3.  ...
         # M_bin_edges     0.  | 1. |  2. |  3. |  4. ....
-        M_bin_edges = bin_edges_log(Mh_history_HR[ind_z, :])
-        HR_indexing = log_binning(Mh_,M_bin_edges )  # np.argmin(np.abs(np.log10(Mh_[:, None] / Mh_history_HR[ind_z, :])), axis=1)
+        # TODO: allow dynamic alpha selection
+        M_bin_edges = bin_edges_log(Mh_history_HR[..., 5, ind_z])
+        HR_indexing = log_binning(Mh_, M_bin_edges)  # np.argmin(np.abs(np.log10(Mh_[:, None] / Mh_history_HR[ind_z, :])), axis=1)
 
         HR_indices, nbr_count = np.unique(HR_indexing, return_counts=True)
-        HR_indices = HR_indices-1
+        HR_indices = HR_indices - 1
 
         ### these are the profiles with finer resolution for each individual halo masses that are in the mass bin
-        R_bubbles_in = R_bubble_HR[HR_indices]
-        rho_alpha_in = profile.rho_alpha_HR[ind_z, :, HR_indices]
-        Tk_in = profile.rho_heat_HR[ind_z, :, HR_indices]
-
+        R_bubbles_in = profile.R_bubble_HR[HR_indices, 5, ind_z]
+        rho_alpha_in = profile.rho_alpha_HR[:, HR_indices, 5, ind_z]
+        Tk_in = profile.rho_heat_HR[:, HR_indices, 5, ind_z]
         ### this is then the new mean profiles accounting for the non uniform distrib of halos inside bin.
         mean_R_bubble_in_bin = np.sum(R_bubbles_in * nbr_count) / np.sum(nbr_count)
         mean_rho_alpha_in_bin = np.sum(nbr_count[:, None] * rho_alpha_in, axis=0) / np.sum(nbr_count)  # .shape
         mean_Tk_in_bin = np.sum(nbr_count[:, None] * Tk_in, axis=0) / np.sum(nbr_count)  # .shape
 
     else:  # no averaging, just the usual thing with coarse M_Bin
-        mean_R_bubble_in_bin = profile.R_bubble[ind_z, i]
-        mean_rho_alpha_in_bin = profile.rho_alpha[ind_z, :, i]
-        mean_Tk_in_bin = profile.rho_heat[ind_z, :, i]
+        mean_R_bubble_in_bin = profile.R_bubble[i, 5, ind_z]
+        mean_rho_alpha_in_bin = profile.rho_alpha[:, i, 5, ind_z]
+        mean_Tk_in_bin = profile.rho_heat[:, i, 5, ind_z]
 
     return mean_R_bubble_in_bin, mean_rho_alpha_in_bin, mean_Tk_in_bin
 
@@ -279,6 +275,7 @@ def Spreading_Excess(Grid_Storage):
 
 
 def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
+    # TODO Whyyyy would you name a variable like this
     """
     Last and fastest version of the function.
     Input : Grid_Storage, the cosmological mesh grid (X,X,X) with the ionized fractions, with overlap (pixels where x_ion>1). (X can be 256, 512 ..)
@@ -549,6 +546,7 @@ def stacked_lyal_kernel(rr_al, lyal_array, LBox, nGrid, nGrid_min):
     lyal_array : the lyal profile (array)
     LBox,nGrid : the box size and grid rez of the current run.
     """
+    # print(f"{rr_al.shape=}, {lyal_array.shape=}")
     profile_xal_HM = interp1d(rr_al, lyal_array, bounds_error=False, fill_value=0)  ##screening
     ind_lya_0 = np.min(np.where(lyal_array == 0))  ## indice where the lyman alpha profile gets to zero
     rr_al_max = rr_al[ind_lya_0]  ### max radius that we need to consider to fully include the lyman alpha profile
@@ -570,8 +568,11 @@ def stacked_lyal_kernel(rr_al, lyal_array, LBox, nGrid, nGrid_min):
     for ii in range(box_extension):  ## loop over the box_extension**3 subboxes and stack them
         for jj in range(box_extension):
             for kk in range(box_extension):
-                stacked_xal_ker += kernel_xal_HM[ii * nGrid_min:(ii + 1) * nGrid_min,
-                                   jj * nGrid_min:(jj + 1) * nGrid_min, kk * nGrid_min:(kk + 1) * nGrid_min]
+                stacked_xal_ker += kernel_xal_HM[
+                    ii * nGrid_min:(ii + 1) * nGrid_min,
+                    jj * nGrid_min:(jj + 1) * nGrid_min,
+                    kk * nGrid_min:(kk + 1) * nGrid_min
+                ]
 
     pix_lft = int(box_extension / 2) * nGrid_min  ### coordinate of the central subbox
     pix_rgth = (1 + int(box_extension / 2)) * nGrid_min

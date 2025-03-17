@@ -165,11 +165,11 @@ def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, 
 
     Returns
     ----------
-    Comoving size [cMpc/h] of the ionized bubble around the source, as a function of time. 2d array of size (M_bin, zz, alpha_bin)
+    TODO
+    Comoving size [cMpc/h] of the ionized bubble around the source, as a function of time. ?d array of size (??)
     """
 
     Ngam_dot = Ngdot_ion(parameters, z_bins[None, None, :], halo_mass, halo_mass_derivative)  # s-1
-    # print(f"{Ngam_dot.shape=}, {halo_mass.shape=}, {halo_mass_derivative.shape=}")
     Ob, Om, h0 = parameters.cosmology.Ob, parameters.cosmology.Om, parameters.cosmology.h
 
     # \bar{n}^0_H - mean comoving number density of baryons [Mpc/h]**-3
@@ -178,7 +178,6 @@ def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, 
     aa = 1/(z_bins+1)
     nb0_z = comoving_baryon_number_density * (1 + z_bins) ** 3 # physical baryon density
 
-    # print(f"{nb0_z.shape=}, {aa.shape=}, {Ngam_dot.shape=}")
     nb0_interp  = interp1d(aa, nb0_z, fill_value = 'extrapolate')
     Ngam_interp = interp1d(aa, Ngam_dot, axis = -1, fill_value = 'extrapolate')
     C = parameters.cosmology.clumping #.0 #clumping factor

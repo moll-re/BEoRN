@@ -4,6 +4,7 @@ Global quantity computed from the halo catalogs.
 
 import os.path
 import numpy as np
+from scipy.integrate import trapezoid
 
 from .cosmo import T_adiab, dTb_factor
 from .couplings import S_alpha, x_coll
@@ -11,6 +12,7 @@ from .constants import *
 from .astro import f_star_Halo
 from .functions import *
 
+# from .computing_profiles import "RadiationProfiles"
 
 def global_xhii_approx(param):
     zz = []
@@ -27,24 +29,27 @@ def global_xhii_approx(param):
     return np.array((zz, xHII))
 
 
-def xHII_approx(parameters: Parameters, halo_catalog):
+def xHII_approx(parameters: Parameters, grid_model, halo_catalog):
     ## compute mean ion fraction from Rbubble values and halo catalog.  for the simple bubble solver
     LBox = parameters.simulation.Lbox  # Mpc/h
-    M_Bin = np.logspace(np.log10(parameters.simulation.halo_mass_bin_min), np.log10(parameters.simulation.halo_mass_bin_min), parameters.simulation.halo_mass_bin_n, base=10)
-    model_name = parameters.simulation.model_name
     H_Masses = halo_catalog['M']
     z = halo_catalog['z']
 
-    grid_model = load_f('./profiles/' + model_name + '.pkl')
     ind_z = np.argmin(np.abs(grid_model.z_history - z))
     zgrid = grid_model.z_history[ind_z]
 
-    H_Masses = np.delete(H_Masses,
-                         np.where(H_Masses < parameters.source.halo_mass_min))  ## remove element smaller than minimum SF halo mass.
+    # remove element smaller than minimum SF halo mass.
+    H_Masses = np.delete(
+        H_Masses,
+        np.where(H_Masses < parameters.source.halo_mass_min)
+    )
 
-    Mh_z_bin = grid_model.Mh_history[ind_z, :]  # M_Bin * np.exp(-param.source.alpha_MAR * (z - z_start))
-    Mh_bin_array = np.concatenate(([Mh_z_bin[0] / 2], np.sqrt(Mh_z_bin[1:] * Mh_z_bin[:-1]),
-                                   [2 * Mh_z_bin[-1]]))  ## shape of binning array is (len(M_bin)+1)
+    Mh_z_bin = grid_model.Mh_history[..., ind_z]
+    Mh_bin_array = np.concatenate((
+        [Mh_z_bin[0] / 2],
+        np.sqrt(Mh_z_bin[1:] * Mh_z_bin[:-1]),
+        [2 * Mh_z_bin[-1]]
+        ))  ## shape of binning array is (len(M_bin)+1)
     # Mh_bin_array = Mh_bin_array * np.exp(-param.source.alpha_MAR * (z - z_start))
     bins = np.digitize(np.log10(H_Masses), np.log10(Mh_bin_array), right=False)
 
@@ -52,7 +57,7 @@ def xHII_approx(parameters: Parameters, halo_catalog):
     # M_Bin                0.   1.    2.    3.  ...
     # Mh_bin_array     0.  | 1. |  2. |  3. |  4. ....
     bins, number_per_bins = np.unique(bins, return_counts=True)
-    bins = bins.clip(max=len(M_Bin))
+    bins = bins.clip(max=len(parameters.simulation.halo_mass_bins))
     ### Ionisation
     Bubble_radii = grid_model.R_bubble[ind_z, bins - 1]
     Bubble_covol = 4 / 3 * np.pi * Bubble_radii ** 3
@@ -63,12 +68,10 @@ def xHII_approx(parameters: Parameters, halo_catalog):
     return zgrid, x_HII
 
 
-def compute_glob_qty(parameters: Parameters):
+def compute_glob_qty(parameters: Parameters, grid_model: "RadiationProfiles") -> dict:
     print('Computing global quantities (sfrd, Tk, xHII, dTb, xal, xcoll) from 1D profiles and halo catalogs....')
     LBox = parameters.simulation.Lbox  # Mpc/h
-    model_name = parameters.simulation.model_name
-    M_Bin = np.logspace(np.log10(parameters.simulation.halo_mass_bin_min), np.log10(parameters.simulation.halo_mass_bin_max), parameters.simulation.halo_mass_bin_n, base=10)
-    grid_model = load_f('./profiles/' + model_name + '.pkl')
+    M_Bin = parameters.simulation.halo_mass_bins
 
     Om, Ob, h0 = parameters.cosmology.Om, parameters.cosmology.Ob, parameters.cosmology.h
     factor = dTb_factor(parameters)
@@ -87,16 +90,21 @@ def compute_glob_qty(parameters: Parameters):
         z_str = z_string_format(z)
         halo_catalog = load_halo(parameters, z_str)
         H_Masses = halo_catalog['M']
-        H_Masses = np.delete(H_Masses, np.where(
-            H_Masses < parameters.source.halo_mass_min))  ## remove element smaller than minimum SF halo mass.
+        # remove element smaller than minimum SF halo mass.
+        H_Masses = np.delete(H_Masses, np.where(H_Masses < parameters.source.halo_mass_min))
         z = halo_catalog['z']
 
         ind_z = np.argmin(np.abs(grid_model.z_history - z))
         radial_grid = grid_model.r_grid_cell / (1 + z)  # pMpc/h
+        # TODO - remove hardcoded alpha index
+        Mh_z_bin = grid_model.Mh_history[..., 5, ind_z]
+        Mh_bin_array = np.concatenate((
+            [Mh_z_bin[0] / 2],
+            np.sqrt(Mh_z_bin[1:] * Mh_z_bin[:-1]),
+            [2 * Mh_z_bin[-1]]
+            ))
+        # shape of binning array is (len(M_bin)+1)
 
-        Mh_z_bin = grid_model.Mh_history[ind_z, :]  # M_Bin * np.exp(-param.source.alpha_MAR * (z - z_start))
-        Mh_bin_array = np.concatenate(([Mh_z_bin[0] / 2], np.sqrt(Mh_z_bin[1:] * Mh_z_bin[:-1]),
-                                       [2 * Mh_z_bin[-1]]))  ## shape of binning array is (len(M_bin)+1)
         # Mh_bin_array = Mh_bin_array * np.exp(-param.source.alpha_MAR * (z - z_start))
         bins = np.digitize(np.log10(H_Masses), np.log10(Mh_bin_array), right=False)
 
@@ -107,30 +115,31 @@ def compute_glob_qty(parameters: Parameters):
         bins = bins.clip(max=len(M_Bin))
 
         ### Ionisation
-        Bubble_radii = grid_model.R_bubble[ind_z, bins - 1]
+        Bubble_radii = grid_model.R_bubble[bins - 1, 5, ind_z]
         Bubble_covol = 4 / 3 * np.pi * Bubble_radii ** 3
         Ionized_covolume = np.sum(Bubble_covol * number_per_bins)
         Ionized_fraction = Ionized_covolume / LBox ** 3
         x_HII = Ionized_fraction.clip(max=1)
 
         ### Temperature
-        Temp_profile = grid_model.rho_heat[ind_z, :, bins - 1]
-        temp_volume = np.trapz(4 * np.pi * radial_grid ** 2 * Temp_profile, radial_grid, axis=1) * number_per_bins
+        Temp_profile = grid_model.rho_heat[:, bins - 1, 5, ind_z]
+        print(f"{grid_model.rho_heat.shape=}, {Temp_profile.shape=}")
+        temp_volume = trapezoid(4 * np.pi * radial_grid ** 2 * Temp_profile, radial_grid) * number_per_bins
         Temp = np.sum(temp_volume) / (LBox / (1 + z)) ** 3  ##physical volume !!
 
         ### Lyman-alpha
         r_lyal = grid_model.r_lyal  # np.logspace(-5, 2, 1000,base=10)  ##    physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
-        rho_alpha_ = grid_model.rho_alpha[ind_z, :,
-                     bins - 1]  # rho_alpha(r_lyal, Mh_z_bin[bins - 1][:, None], z, param)
+        rho_alpha_ = grid_model.rho_alpha[:, 5, bins - 1, ind_z]
+        # rho_alpha(r_lyal, Mh_z_bin[bins - 1][:, None], z, param)
         x_alpha_prof = 1.81e11 * rho_alpha_ / (1 + z)
         xal_volume = np.sum(
-            np.trapz(4 * np.pi * r_lyal ** 2 * x_alpha_prof, r_lyal, axis=1) * number_per_bins)  ##physical volume !!
+            trapezoid(4 * np.pi * r_lyal ** 2 * x_alpha_prof, r_lyal) * number_per_bins)  ##physical volume !!
         x_al = xal_volume / (LBox / (1 + z)) ** 3
 
         ### SFRD
         Temp = Temp + T_adiab(z, parameters)
-        dMstar_dt = grid_model.dMh_dt[ind_z, :] * f_star_Halo(parameters,
-                                                              Mh_z_bin) * parameters.cosmology.Ob / parameters.cosmology.Om  # param.source.alpha_MAR * Mh_z_bin * (z + 1) * Hubble(z, param) * f_star_Halo(param, Mh_z_bin)
+        dMstar_dt = grid_model.dMh_dt[:, 5, ind_z] * f_star_Halo(parameters, Mh_z_bin) * parameters.cosmology.Ob / parameters.cosmology.Om
+        # param.source.alpha_MAR * Mh_z_bin * (z + 1) * Hubble(z, param) * f_star_Halo(param, Mh_z_bin)
         dMstar_dt[np.where(Mh_z_bin < parameters.source.halo_mass_min)] = 0
         SFRD = np.sum(number_per_bins * dMstar_dt[bins - 1])
         SFRD = SFRD / LBox ** 3  #### [(Msol/h) / yr /(cMpc/h)**3]

@@ -1187,6 +1187,7 @@ def compute_velocity(parameters: Parameters, zz, density_field):
     return v_x, v_y, v_z
 
 
+# TODO - remove from here
 def dTb_RSD(parameters: Parameters, zz, delta_b, grid_dTb):
     """
     Use tools21cm to apply Redshift Space Distortion to the dTb field.
