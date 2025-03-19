@@ -44,7 +44,8 @@ def xHII_approx(parameters: Parameters, grid_model, halo_catalog):
         np.where(H_Masses < parameters.source.halo_mass_min)
     )
 
-    Mh_z_bin = grid_model.Mh_history[..., ind_z]
+    # TODO - remove hardcoded alpha index
+    Mh_z_bin = grid_model.Mh_history[..., 5, ind_z]
     Mh_bin_array = np.concatenate((
         [Mh_z_bin[0] / 2],
         np.sqrt(Mh_z_bin[1:] * Mh_z_bin[:-1]),
@@ -59,7 +60,7 @@ def xHII_approx(parameters: Parameters, grid_model, halo_catalog):
     bins, number_per_bins = np.unique(bins, return_counts=True)
     bins = bins.clip(max=len(parameters.simulation.halo_mass_bins))
     ### Ionisation
-    Bubble_radii = grid_model.R_bubble[ind_z, bins - 1]
+    Bubble_radii = grid_model.R_bubble[bins - 1, 5, ind_z]
     Bubble_covol = 4 / 3 * np.pi * Bubble_radii ** 3
     Ionized_covolume = np.sum(Bubble_covol * number_per_bins)
     Ionized_fraction = Ionized_covolume / LBox ** 3
@@ -123,17 +124,18 @@ def compute_glob_qty(parameters: Parameters, grid_model: "RadiationProfiles") ->
 
         ### Temperature
         Temp_profile = grid_model.rho_heat[:, bins - 1, 5, ind_z]
-        print(f"{grid_model.rho_heat.shape=}, {Temp_profile.shape=}")
-        temp_volume = trapezoid(4 * np.pi * radial_grid ** 2 * Temp_profile, radial_grid) * number_per_bins
+        print(f"{grid_model.rho_heat.shape=}, {Temp_profile.shape=}, {radial_grid.shape=}")
+        temp_volume = trapezoid(4 * np.pi * radial_grid[:, None] ** 2 * Temp_profile, radial_grid, axis = 0) * number_per_bins
         Temp = np.sum(temp_volume) / (LBox / (1 + z)) ** 3  ##physical volume !!
 
         ### Lyman-alpha
         r_lyal = grid_model.r_lyal  # np.logspace(-5, 2, 1000,base=10)  ##    physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
-        rho_alpha_ = grid_model.rho_alpha[:, 5, bins - 1, ind_z]
+        rho_alpha_ = grid_model.rho_alpha[:, bins - 1, 5, ind_z]
         # rho_alpha(r_lyal, Mh_z_bin[bins - 1][:, None], z, param)
         x_alpha_prof = 1.81e11 * rho_alpha_ / (1 + z)
         xal_volume = np.sum(
-            trapezoid(4 * np.pi * r_lyal ** 2 * x_alpha_prof, r_lyal) * number_per_bins)  ##physical volume !!
+            trapezoid(4 * np.pi * r_lyal[:, None] ** 2 * x_alpha_prof, r_lyal, axis = 0) * number_per_bins
+            )  ##physical volume !!
         x_al = xal_volume / (LBox / (1 + z)) ** 3
 
         ### SFRD
@@ -163,8 +165,7 @@ def compute_glob_qty(parameters: Parameters, grid_model: "RadiationProfiles") ->
 
     print( '....done. Returns a dictionnary.')
 
-    zz, Tk, xHII, sfrd, s_alpha, x_alpha, dTb_arr, xcoll_arr = np.array(zz), np.array(Tk), np.array(xHII), np.array(
-        sfrd), np.array(s_alpha), np.array(x_alpha), np.array(dTb_arr), np.array(xcoll_arr)
+    zz, Tk, xHII, sfrd, s_alpha, x_alpha, dTb_arr, xcoll_arr = np.array(zz), np.array(Tk), np.array(xHII), np.array(sfrd), np.array(s_alpha), np.array(x_alpha), np.array(dTb_arr), np.array(xcoll_arr)
     #matrice = np.array([zz, Tk, xHII, sfrd, s_alpha, x_alpha, dTb_arr, xcoll_arr])
     #zz, Tk, xHII, sfrd, s_alpha, x_alpha, dTb_arr, xcoll_arr = matrice[:, matrice[0].argsort()]  ## sort according to zz
 

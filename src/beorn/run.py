@@ -8,7 +8,7 @@ import time
 import numpy as np
 from scipy.interpolate import interp1d
 import scipy
-import tools21cm as t2c
+# import tools21cm as t2c
 
 from .constants import cm_per_Mpc, M_sun, m_H
 from .cosmo import D, hubble, T_adiab_fluctu, dTb_fct, T_cmb

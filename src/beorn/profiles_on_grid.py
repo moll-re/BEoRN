@@ -73,9 +73,9 @@ def average_profile(parameters: Parameters, profile, Mh_, ind_z, i):
         rho_alpha_in = profile.rho_alpha_HR[:, HR_indices, 5, ind_z]
         Tk_in = profile.rho_heat_HR[:, HR_indices, 5, ind_z]
         ### this is then the new mean profiles accounting for the non uniform distrib of halos inside bin.
-        mean_R_bubble_in_bin = np.sum(R_bubbles_in * nbr_count) / np.sum(nbr_count)
-        mean_rho_alpha_in_bin = np.sum(nbr_count[:, None] * rho_alpha_in, axis=0) / np.sum(nbr_count)  # .shape
-        mean_Tk_in_bin = np.sum(nbr_count[:, None] * Tk_in, axis=0) / np.sum(nbr_count)  # .shape
+        mean_R_bubble_in_bin = np.sum(R_bubbles_in * nbr_count, axis = 0) / np.sum(nbr_count)
+        mean_rho_alpha_in_bin = np.sum(nbr_count[:, None] * rho_alpha_in, axis = -1) / np.sum(nbr_count)  # .shape
+        mean_Tk_in_bin = np.sum(nbr_count[:, None] * Tk_in, axis = -1) / np.sum(nbr_count)  # .shape
 
     else:  # no averaging, just the usual thing with coarse M_Bin
         mean_R_bubble_in_bin = profile.R_bubble[i, 5, ind_z]
@@ -177,7 +177,8 @@ def put_profiles_group(source_pos, nbr_of_halos, profile_kern, nGrid=None):
 
     Bin halos masses to do this. Then in a given bin all halos are assumed to have the same profile. This speeds up dramatically this step.
     '''
-    if nGrid is None: nGrid = profile_kern.shape[0]
+    if nGrid is None:
+        nGrid = profile_kern.shape[0]
     source_grid = np.zeros((nGrid, nGrid, nGrid))
     # for i, j, k in source_pos:
     #    source_grid[i, j, k] += 1

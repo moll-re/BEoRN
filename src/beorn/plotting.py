@@ -60,14 +60,19 @@ def plot_PS_Beorn(z, PS, color, ax, Beta=1, label='', qty='xHII', with_dTb=False
 
     kk, zz = PS['k'], PS['z']
     ind_z = np.argmin(np.abs(zz - z))
-    print('--BEORN -- plotting power spectrum of ', qty, 'at redshift ', round(PS['z'][ind_z], 3))
+    if zz.shape == ():
+        zz = np.array([zz])
+
+    print(ind_z, zz)
+
+    logger.info(f'Plotting power spectrum of {qty} at redshift {zz[ind_z]:.3}')
     coef = 1
     if with_dTb:
         coef = GS['dTb'][ind_z] ** 2
         print('at z = ', zz[ind_z], 'dTb Boern IS : ', GS['dTb'][ind_z])
 
     try:
-        ax.loglog(kk * 0.68, coef * kk ** 3 * Beta * np.abs(PS['PS_' + qty][ind_z]) / 2 / np.pi ** 2, lw=lw,
+        ax.loglog(kk * 0.68, coef * kk ** 3 * Beta * np.abs(PS['PS_' + qty]) / 2 / np.pi ** 2, lw=lw,
                   alpha=alpha, label=label,
                   color=color, ls=ls)
     except Exception:
