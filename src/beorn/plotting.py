@@ -104,18 +104,19 @@ def plot_Beorn_PS_of_z(k, GS_Beorn, PS_Beorn, ls='-', lw=1, color='b', RSD=False
                     color=color,label='expansion')
 
 
-def plot_2d_map(grid,  Lbox=None, slice_nbr=None, qty='label', scale='lin'):
+def plot_2d_map(grid, Lbox=None, slice_nbr=None, qty='label', scale='lin'):
     # Ncell : int, nbr of grid pixels
     # slice_nbr : int, slice to plot
     # Lbox : int, Box size in Mpc/h
     Ncell = grid.shape[0]
-    print('Ncell is ',Ncell)
+    logger.debug(f'Ncell is {Ncell}')
     if Lbox is None :
         Lbox = 100
-        print('No Lbox provided, assuming 100Mpc/h (only relevant for the label)')
+        logger.info('No Lbox provided, assuming 100Mpc/h (only relevant for the label)')
     if slice_nbr is None:
         slice_nbr = int(Ncell/2)
         print('No slice number provided, plotting the slice (:,Ncell/2,:)')
+    
     if scale == 'lin':
         norm = None
     elif scale == 'log':
