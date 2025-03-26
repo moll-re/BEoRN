@@ -49,7 +49,7 @@ def plot_Beorn(physics, qty='dTb', xlim=None, ylim=None, label='', color='C0', l
         print('available qty in Beorn: ', physics.keys())
 
 
-def plot_PS_Beorn(z, PS, color, ax, Beta=1, label='', qty='xHII', with_dTb=False, GS=None, ls='-', alpha=0.5, lw=3):
+def plot_PS_Beorn(z, quantities, color, ax, Beta=1, label='', qty='xHII', with_dTb=False, GS=None, ls='-', alpha=0.5, lw=3):
     """""""""
     Plot a Beorn power spectrum as a function of k.
     Beta : float, the beta factor in the perturbative expansion of dTb. Set to 1 by default. 
@@ -58,9 +58,9 @@ def plot_PS_Beorn(z, PS, color, ax, Beta=1, label='', qty='xHII', with_dTb=False
     matplotlib.rc('xtick', labelsize=15)
     matplotlib.rc('ytick', labelsize=15)
 
-    kk, zz = PS['k'], PS['z']
+    kk, zz = quantities.k_bins, z
     ind_z = np.argmin(np.abs(zz - z))
-    if zz.shape == ():
+    if not isinstance(zz, np.ndarray):
         zz = np.array([zz])
 
     print(ind_z, zz)
@@ -68,15 +68,22 @@ def plot_PS_Beorn(z, PS, color, ax, Beta=1, label='', qty='xHII', with_dTb=False
     logger.info(f'Plotting power spectrum of {qty} at redshift {zz[ind_z]:.3}')
     coef = 1
     if with_dTb:
+        # TODO - where should dTb be computed?
         coef = GS['dTb'][ind_z] ** 2
         print('at z = ', zz[ind_z], 'dTb Boern IS : ', GS['dTb'][ind_z])
 
-    try:
-        ax.loglog(kk * 0.68, coef * kk ** 3 * Beta * np.abs(PS['PS_' + qty]) / 2 / np.pi ** 2, lw=lw,
+    if qty == 'dTb':
+        val = coef * kk ** 3 * Beta * np.abs(quantities.PS_dTb) / 2 / np.pi ** 2
+    elif qty == 'xHII':
+        val = coef * kk ** 3 * Beta * np.abs(quantities.PS_xHII) / 2 / np.pi ** 2
+    elif qty == 'T':
+        val = coef * kk ** 3 * Beta * np.abs(quantities.PS_T) / 2 / np.pi ** 2
+    else:
+        raise ValueError('qty should be dTb, xHII or Tk')
+
+    ax.loglog(kk * 0.68, val, lw=lw,
                   alpha=alpha, label=label,
                   color=color, ls=ls)
-    except Exception:
-        print('RT:', PS.keys())
     plt.legend()
     plt.xlabel('k [1/Mpc]', fontsize=14)
     plt.ylabel(r'$\Delta^{2} = k^{3}P(k)/(2\pi^{2})$', fontsize=14)

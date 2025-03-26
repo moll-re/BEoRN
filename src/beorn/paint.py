@@ -20,6 +20,8 @@ from .run import dTb_RSD, compute_cross_correlations, compute_var_single_z
 from .global_qty import xHII_approx
 from .profiles_on_grid import average_profile, cumulated_number_halos, profile_to_3Dkernel, put_profiles_group, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
 
+
+
 @dataclass(slots = True)
 class GridQuantities:
     # power spectrum scalings
@@ -29,6 +31,8 @@ class GridQuantities:
     PS_dTb_RSD: np.ndarray
     PS_dTb_no_reio: np.ndarray
     PS_dTb_T_sat: np.ndarray
+    T_spin: float
+    dTb_RSD_mean: float
 
 
 @dataclass(slots = True)
@@ -45,10 +49,42 @@ class GridData:
     # Lyman alpha profiles
     Grid_xal: np.ndarray
     Grid_xtot: np.ndarray
-    Grid_xcoll: np.ndarray
-    xcoll_mean: np.ndarray
 
     # TODO some of these should not need to be precomputed - they could be made available as properties
+
+
+
+
+
+@dataclass(slots=True)
+class GridDataMultiZ:
+    z: np.ndarray  # Array of redshift values
+    grid_data: list[GridData]  # List of GridData objects corresponding to each redshift
+
+    ## The properties below are deliberately named the same way as in the GridData class
+    # This way we can query the properties of the GridData objects as a z-indexed array 
+    @property
+    def Grid_Temp(self) -> np.ndarray:
+        return np.array([gd.Grid_Temp for gd in self.grid_data])
+
+    @property
+    def Grid_dTb(self) -> np.ndarray:
+        return np.array([gd.Grid_dTb for gd in self.grid_data])
+
+    @property
+    def Grid_xHII(self) -> np.ndarray:
+        return np.array([gd.Grid_xHII for gd in self.grid_data])
+    
+    @property
+    def Grid_xal(self) -> np.ndarray:
+        return np.array([gd.Grid_xal for gd in self.grid_data])
+    
+    @property
+    def Grid_xtot(self) -> np.ndarray:
+        return np.array([gd.Grid_xtot for gd in self.grid_data])
+    
+    # TODO - the rest
+
 
 
 def paint_boxes(
@@ -94,7 +130,8 @@ def paint_boxes(
     # comm, rank, size = initialise_mpi4py(parameters)
 
     z_arr = def_redshifts(parameters)
-    logger.info(f'Painting {len(z_arr)} profiles on a grid with {nGrid=} (pixels per dim). Box size is {LBox=} cMpc/h.')
+    grid_data_full = []
+    logger.info(f'Painting profiles for {len(z_arr)} z snapshots. Using a grid with {nGrid=} (pixels per dim) and a box size of {LBox=} cMpc/h.')
     # TODO - this loop could be parallelized using MPI
     for ii, z in enumerate(z_arr):
         z = np.round(z, 2)
@@ -124,6 +161,7 @@ def paint_boxes(
             Rsmoothing=Rsmoothing,
             truncate=truncate
         )
+        grid_data_full.append(grid_data)
 
         grid_quantities = compute_quantities_single_z(
             z,
@@ -137,12 +175,16 @@ def paint_boxes(
             variance=variance,
         )
 
+        # INSTEAD OF WRITING THE DATA IN EACH LOOP, WE CAN WRITE IT IN THE END
         if output_handler is not None:
             output_handler.write_file(parameters, grid_quantities, z=z)
 
-            # TODO - this does not need to be a global parameter
-            if parameters.simulation.store_grids is not False:
-                output_handler.write_file(parameters, grid_data, z=z)
+    if output_handler is not None and parameters.simulation.store_grids:
+        grid_data_multi_z = GridDataMultiZ(
+            z = z_arr,
+            grid_data = grid_data_full
+        )
+        output_handler.write_file(parameters, grid_data_multi_z)
 
     logger.info(f"Paining finished! Elapsed time: {time.process_time() - start_time:.2} seconds")
 
@@ -184,7 +226,7 @@ def compute_quantities_single_z(
         PS_dTb_RSD = 0
         Grid_dTb_RSD = data.Grid_dTb
     else:
-        print('Computing RSD for snapshot...')
+        logger.debug('Computing RSD for snapshot...')
         Grid_dTb_RSD = dTb_RSD(parameters, z, data.delta_b, data.Grid_dTb)
         delta_Grid_dTb_RSD = Grid_dTb_RSD / np.mean(Grid_dTb_RSD) - 1
         PS_dTb_RSD = t2c.power_spectrum.power_spectrum_1d(
@@ -198,14 +240,13 @@ def compute_quantities_single_z(
 
 
     # TODO - make it more clear what values are stored (and why)
-    GS_PS_dict = {'z': z, 'dTb': np.mean(data.Grid_dTb), 'Tk': np.mean(data.Grid_Temp), 'x_HII': np.mean(data.Grid_xHII),
-                  'PS_dTb': PS_dTb, 'k': k_bins, 'Tspin':T_spin,
-                  'PS_dTb_RSD': PS_dTb_RSD, 'dTb_RSD': dTb_RSD_mean, 'x_al': np.mean(data.Grid_xal),
-                  'x_coll': data.xcoll_mean,'PS_dTb_no_reio':PS_dTb_no_reio,'dTb_no_reio': np.mean(data.Grid_dTb_no_reio),
-                  'PS_dTb_T_sat':PS_dTb_T_sat,'dTb_T_sat': np.mean(data.Grid_dTb_T_sat)}
+    # GS_PS_dict = {'z': z, 'dTb': np.mean(data.Grid_dTb), 'Tk': np.mean(data.Grid_Temp), 'x_HII': np.mean(data.Grid_xHII),
+    #               'PS_dTb': PS_dTb, 'k': k_bins, 'Tspin':T_spin,
+    #               'PS_dTb_RSD': PS_dTb_RSD, 'dTb_RSD': dTb_RSD_mean, 'x_al': np.mean(data.Grid_xal),
+    #               'x_coll': data.xcoll_mean,'PS_dTb_no_reio':PS_dTb_no_reio,'dTb_no_reio': np.mean(data.Grid_dTb_no_reio),
+    #               'PS_dTb_T_sat':PS_dTb_T_sat,'dTb_T_sat': np.mean(data.Grid_dTb_T_sat)}
 
 
-    # TODO - does anybody use this? then I need to adapt it as well
     # if cross_corr:
     #     GS_PS_dict = compute_cross_correlations(
     #         parameters,
@@ -218,12 +259,13 @@ def compute_quantities_single_z(
     #         fourth_order = fourth_order,
     #         truncate = truncate
     #     )
+
     if variance:
         # we do this since in compute_var we change the kbins to go to smaller scales.
         # TODO - why was it deepcopied?
         # param_copy = copy.deepcopy(parameters)
         # TODO - DO NOT EXPORT THIS AS A SEPARATE FILE!!
-        compute_var_single_z(parameters, z, data.Grid_xal, data.Grid_xHII, data.Grid_Temp, k_bins)
+        compute_var_single_z(parameters, z, data.Grid_xal, data.Grid_xHII, data.Grid_Temp, data.delta_b, k_bins)
 
     return GridQuantities(
         k_bins = k_bins,
@@ -231,7 +273,9 @@ def compute_quantities_single_z(
         PS_dTb_RSD = PS_dTb_RSD,
         PS_dTb_no_reio = PS_dTb_no_reio,
         PS_dTb_T_sat = PS_dTb_T_sat,
+        dTb_RSD_mean = dTb_RSD_mean,
         # TODO
+        T_spin = T_spin
     )
 
 
@@ -295,6 +339,7 @@ def paint_profiles_single_z(
 
     # find matching redshift between solver output and simulation snapshot.
     # this will raise an error if the needed profiles are not available
+    # The loading is left in this function to allow for the possibility of parallelizing the painting
     grid_model: RadiationProfiles = cache_handler.load_file(parameters, RadiationProfiles)
     ind_z = np.argmin(np.abs(grid_model.z_history - z))
     zgrid = grid_model.z_history[ind_z]
@@ -328,7 +373,6 @@ def paint_profiles_single_z(
         Grid_dTb_RSD = np.array([0])
         Grid_dTb_T_sat = factor * np.sqrt(1 + z) * (1 - Grid_xHII) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
         xcoll_mean = np.mean(Grid_xcoll)
-        T_spin = np.mean(Tspin_fct(constants.Tcmb0 * (1 + z), Grid_Temp, Grid_xcoll))
         
         return GridData(
             delta_b = delta_b,
@@ -339,10 +383,8 @@ def paint_profiles_single_z(
             Grid_dTb_RSD = Grid_dTb_RSD,
             Grid_xHII = Grid_xHII,
             Grid_xal = Grid_xal,
-            Grid_xcoll = Grid_xcoll,
-            # TODO - xtot should probably be different here
+            # TODO - what value for xtot?
             Grid_xtot = Grid_xcoll,
-            xcoll_mean = xcoll_mean,
         )
 
 
@@ -374,8 +416,8 @@ def paint_profiles_single_z(
             Grid_dTb_RSD = np.array([0]),
             Grid_xHII = Grid_xHII,
             Grid_xal = Grid_xal,
-            # TODO - what should the value be?
-            xcoll_mean = np.array([0]),
+            # TODO - what value for xtot?
+            Grid_xtot = np.array([0]),
         )
 
 
@@ -384,147 +426,152 @@ def paint_profiles_single_z(
 
     # initialise the "main" grids here and iteratively add the profiles
     Grid_xHII = np.zeros((nGrid, nGrid, nGrid))
-    Grid_xal = np.zeros((nGrid, nGrid, nGrid))
     Grid_Temp = np.zeros((nGrid, nGrid, nGrid))
+    Grid_xal = np.zeros((nGrid, nGrid, nGrid))
+    
+    radial_grid = grid_model.r_grid_cell / (1 + zgrid)  # pMpc/h
 
     for i in range(len(parameters.simulation.halo_mass_bins)):
-        indices = np.where(Indexing == i)[0]  ## indices in H_Masses of halos that have an initial mass at z=z_start between M_Bin[i-1] and M_Bin[i]
+        # indices in H_Masses of halos that have an initial mass at z=z_start between M_Bin[i-1] and M_Bin[i]
+        indices = np.where(Indexing == i)[0]
         # TODO - pick alpha flexibly
         Mh_ = grid_model.Mh_history[i, 5, ind_z]
+        logger.debug(f'Processing {len(indices)} halos in mass bin {i} with {Mh_=:0.2e}')
+        
+        # nothing to process - skip to next loop iteration
+        if len(indices) == 0 or Mh_ < parameters.source.halo_mass_min:
+            continue
 
-        if len(indices) > 0 and Mh_ > parameters.source.halo_mass_min:
-            radial_grid = grid_model.r_grid_cell / (1 + zgrid)  # pMpc/h
+
+        # for sanity
+        R_bubble, rho_alpha_, Temp_profile = average_profile(parameters, grid_model, H_Masses[indices], ind_z, i)
+        logger.debug(
+            "Computing average profiles: "
+            f"{grid_model.R_bubble.shape=} -> {R_bubble.shape=}, "
+            f"{grid_model.rho_heat.shape=} -> {Temp_profile.shape}, "
+            f"{grid_model.rho_alpha.shape=} -> {rho_alpha_.shape}"
+        )
+
+
+        # This is the position of halos in base "nGrid". We use this to speed up the code.
+        # We count with np.unique the number of halos in each cell. Then we do not have to loop over halo positions in --> profiles_on_grid/put_profiles_group
+        unique_base_nGrid_poz, nbr_of_halos = cumulated_number_halos(parameters, H_X[indices], H_Y[indices], H_Z[indices], cic=cic)
+        ZZ_indice = unique_base_nGrid_poz // (nGrid ** 2)
+        YY_indice = (unique_base_nGrid_poz - ZZ_indice * nGrid ** 2) // nGrid
+        XX_indice = (unique_base_nGrid_poz - ZZ_indice * nGrid ** 2 - YY_indice * nGrid)
+
+        # Every halo in the mass bin i is assumed to have the mass M_bin[i].
+        if ion:
             x_HII_profile = np.zeros((len(radial_grid)))
-
-            # for sanity
-            R_bubble, rho_alpha_, Temp_profile = average_profile(parameters, grid_model, H_Masses[indices], ind_z, i)
-            logger.debug(
-                "Computing average profiles: "
-                f"{grid_model.R_bubble.shape=} -> {R_bubble.shape=}, "
-                f"{grid_model.rho_heat.shape=} -> {Temp_profile.shape}, "
-                f"{grid_model.rho_alpha.shape=} -> {rho_alpha_.shape}"
-            )
             x_HII_profile[np.where(radial_grid < R_bubble / (1 + zgrid))] = 1
 
-
-            r_lyal = grid_model.r_lyal
-            # physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
+            logger.warning('Painting ionization profile')
+            # modify Grid_xHII in place
+            paint_ionization_profile(
+                parameters, Grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, nbr_of_halos
+            )
+        if lyal:
             x_alpha_prof = 1.81e11 * (rho_alpha_) / (1 + zgrid)
             # We add up S_alpha(zgrid, T_extrap, 1 - xHII_extrap) later, a the map level.
 
-            # This is the position of halos in base "nGrid". We use this to speed up the code.
-            # We count with np.unique the number of halos in each cell. Then we do not have to loop over halo positions in --> profiles_on_grid/put_profiles_group
-            unique_base_nGrid_poz, nbr_of_halos = cumulated_number_halos(parameters, H_X[indices], H_Y[indices], H_Z[indices], cic=cic)
-            ZZ_indice = unique_base_nGrid_poz // (nGrid ** 2)
-            YY_indice = (unique_base_nGrid_poz - ZZ_indice * nGrid ** 2) // nGrid
-            XX_indice = (unique_base_nGrid_poz - ZZ_indice * nGrid ** 2 - YY_indice * nGrid)
+            # TODO - document how r_lyal is the physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
+            # modify Grid_xal in place
+            paint_alpha_profile(
+                parameters, Grid_xal, grid_model.r_lyal, x_alpha_prof, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
+            )
+        if temp:
+            # modify Grid_Temp in place
+            paint_temperature_profile(
+                parameters, Grid_Temp, radial_grid, Temp_profile, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
+            )
 
-            # Every halo in the mass bin i is assumed to have the mass M_bin[i].
-            if ion:
-                # modify Grid_xHII in place
-                paint_ionization_profile(
-                    parameters, Grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, nbr_of_halos
-                )
-            if lyal:
-                # modify Grid_xal in place
-                paint_alpha_profile(
-                    parameters, Grid_xal, r_lyal, x_alpha_prof, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
-                )
-            if temp:
-                # modify Grid_Temp in place
-                paint_temperature_profile(
-                    parameters, Grid_Temp, radial_grid, Temp_profile, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
-                )
+        end_time = time.process_time()
+        logger.debug(f'Painted profiles in {end_time - start_time:.2} seconds.')
+        start_time = end_time
 
-            end_time = time.process_time()
-            logger.debug(f'Processing {len(indices)} halos in mass bin {i}. Painted profiles in {end_time - start_time:.2} seconds.')
-            start_time = end_time
+    logger.info('Profile painting done.')
 
-        logger.info('Profile painting done.')
+    logger.info('Dealing with the overlap of ionised bubbles. Redistributing excess photons from the overlapping regions.')
+    start_time = time.process_time()
+    if ion and np.sum(Grid_xHII) < nGrid ** 3:
+        Grid_xHII = spreading_excess_fast(parameters, Grid_xHII)
+    else:
+        Grid_xHII = np.array([1])
 
-        logger.info('Dealing with the overlap of ionised bubbles. Redistributing excess photons from the overlapping regions.')
-        start_time = time.process_time()
-        if ion and np.sum(Grid_xHII) < nGrid ** 3:
-            Grid_xHII = spreading_excess_fast(parameters, Grid_xHII)
-        else:
-            Grid_xHII = np.array([1])
+    logger.info(f'Overlap processing done. Took {time.process_time() - start_time:.2} seconds.')
 
-        logger.info(f'Overlap processing done. Took {time.process_time() - start_time:.2} seconds.')
+    # TODO - why not just leave the full array?
+    # if np.all(Grid_xHII == 0):
+    #     Grid_xHII = np.array([0])
+    # if np.all(Grid_xHII == 1):
+    #     logger.info('Universe is fully ionized. Returning [1] for Grid_xHII.')
+    #     Grid_xHII = np.array([1])
 
-        if np.all(Grid_xHII == 0):
-            Grid_xHII = np.array([0])
-        if np.all(Grid_xHII == 1):
-            logger.info('Universe is fully ionized. Returning [1] for Grid_xHII.')
-            Grid_xHII = np.array([1])
-
-        Grid_Temp += T_adiab_fluctu(z, parameters, delta_b)
+    Grid_Temp += T_adiab_fluctu(z, parameters, delta_b)
 
 
-        # TODO - why is this here??
-        # TODO - this is super error prone.
-        # if read_temp:
-        #     Grid_Temp = load_grid(parameters, z=z, type='Tk')
+    # TODO - why is this here??
+    # TODO - this is super error prone.
+    # if read_temp:
+    #     Grid_Temp = load_grid(parameters, z=z, type='Tk')
 
-        # if read_ion:
-        #     Grid_xHII = load_grid(parameters, z=z, type='bubbles')
+    # if read_ion:
+    #     Grid_xHII = load_grid(parameters, z=z, type='bubbles')
 
-        # if read_lyal:
-        #     Grid_xal = load_grid(parameters, z=z, type='lyal')
-        # else:
-        if S_al:
-            logger.debug('Including Salpha fluctuations in dTb')
-            Grid_xal = Grid_xal * S_alpha(z, Grid_Temp, 1 - Grid_xHII) / (4 * np.pi )
-            # We divide by 4pi to go to sr**-1 units
-        else:
-            logger.debug('NOT Salpha fluctuations in dTb')
-            Grid_xal = Grid_xal * S_alpha(z, np.mean(Grid_Temp), 1 - np.mean(Grid_xHII)) / (4 * np.pi )
+    # if read_lyal:
+    #     Grid_xal = load_grid(parameters, z=z, type='lyal')
+    # else:
+    if S_al:
+        logger.debug('Including Salpha fluctuations in dTb')
+        Grid_xal = Grid_xal * S_alpha(z, Grid_Temp, 1 - Grid_xHII) / (4 * np.pi)
+        # We divide by 4pi to go to sr**-1 units
+    else:
+        logger.debug('NOT including Salpha fluctuations in dTb')
+        Grid_xal = Grid_xal * S_alpha(z, np.mean(Grid_Temp), 1 - np.mean(Grid_xHII)) / (4 * np.pi)
 
 
 
-        if Rsmoothing > 0:
-            logger.info(f'Smoothing the fields with {Rsmoothing=}')
-            Grid_xal = smooth_field(Grid_xal, Rsmoothing, LBox, nGrid)
-            Grid_Temp = smooth_field(Grid_Temp, Rsmoothing, LBox, nGrid)
-            #Grid_xHII = smooth_field(Grid_xHII, Rsmoothing, LBox, nGrid)
-            #delta_b   = smooth_field(delta_b, Rsmoothing, LBox, nGrid)
-            # TODO - why are the other fields not smoothed?
+    if Rsmoothing > 0:
+        logger.info(f'Smoothing the fields with {Rsmoothing=}')
+        Grid_xal = smooth_field(Grid_xal, Rsmoothing, LBox, nGrid)
+        Grid_Temp = smooth_field(Grid_Temp, Rsmoothing, LBox, nGrid)
+        #Grid_xHII = smooth_field(Grid_xHII, Rsmoothing, LBox, nGrid)
+        #delta_b   = smooth_field(delta_b, Rsmoothing, LBox, nGrid)
+        # TODO - why are the other fields not smoothed?
 
 
-        if xcoll:
-            logger.info('Including xcoll fluctuations in dTb')
-            Grid_xcoll = x_coll(z = z, Tk = Grid_Temp, xHI = (1 - Grid_xHII), rho_b = (delta_b + 1) * coef)
-            xcoll_mean = np.mean(Grid_xcoll)
-            Grid_xtot = Grid_xcoll + Grid_xal
-            # del Grid_xcoll
-        else:
-            logger.info('NOT including xcoll fluctuations in dTb')
-            xcoll_mean = x_coll(z = z, Tk = np.mean(Grid_Temp), xHI = (1 - np.mean(Grid_xHII)), rho_b = coef)
-            Grid_xtot = Grid_xal + xcoll_mean
+    if xcoll:
+        logger.info('Including xcoll fluctuations in dTb')
+        Grid_xcoll = x_coll(z = z, Tk = Grid_Temp, xHI = (1 - Grid_xHII), rho_b = (delta_b + 1) * coef)
+        xcoll_mean = np.mean(Grid_xcoll)
+        Grid_xtot = Grid_xcoll + Grid_xal
+        # del Grid_xcoll
+    else:
+        logger.info('NOT including xcoll fluctuations in dTb')
+        xcoll_mean = x_coll(z = z, Tk = np.mean(Grid_Temp), xHI = (1 - np.mean(Grid_xHII)), rho_b = coef)
+        Grid_xtot = Grid_xal + xcoll_mean
 
 
-        if dTb:
-            Grid_dTb = dTb_fct(z=z, Tk=Grid_Temp, xtot=Grid_xtot, delta_b=delta_b, x_HII=Grid_xHII, parameters=parameters)
-            Grid_dTb_no_reio = dTb_fct(z=z, Tk=Grid_Temp, xtot=Grid_xtot, delta_b=delta_b, x_HII=np.array([0]), parameters=parameters)
+    if dTb:
+        Grid_dTb = dTb_fct(z=z, Tk=Grid_Temp, xtot=Grid_xtot, delta_b=delta_b, x_HII=Grid_xHII, parameters=parameters)
+        Grid_dTb_no_reio = dTb_fct(z=z, Tk=Grid_Temp, xtot=Grid_xtot, delta_b=delta_b, x_HII=np.array([0]), parameters=parameters)
+        Grid_dTb_T_sat = dTb_fct(z=z, Tk=1e50, xtot = 1e50, delta_b=delta_b, x_HII=Grid_xHII, parameters=parameters)
+    else:
+        Grid_dTb = np.array([0])
+        Grid_dTb_no_reio = np.array([0])
+        Grid_dTb_T_sat = np.array([0])
 
-            Grid_dTb_T_sat = dTb_fct(z=z, Tk=1e50, xtot = 1e50, delta_b=delta_b, x_HII=Grid_xHII, parameters=parameters)
-        else:
-            Grid_dTb = np.array([0])
-            Grid_dTb_no_reio = np.array([0])
-            Grid_dTb_T_sat = np.array([0])
-
-        return GridData(
-            delta_b = delta_b,
-            Grid_Temp = Grid_Temp,
-            Grid_dTb = Grid_dTb,
-            Grid_dTb_no_reio = Grid_dTb_no_reio,
-            Grid_dTb_T_sat = Grid_dTb_T_sat,
-            Grid_dTb_RSD = np.array([0]),
-            Grid_xHII = Grid_xHII,
-            Grid_xal = Grid_xal,
-            Grid_xtot = Grid_xtot,
-            Grid_xcoll = Grid_xcoll,
-            xcoll_mean = xcoll_mean,
-        )
+    return GridData(
+        delta_b = delta_b,
+        Grid_Temp = Grid_Temp,
+        Grid_dTb = Grid_dTb,
+        Grid_dTb_no_reio = Grid_dTb_no_reio,
+        Grid_dTb_T_sat = Grid_dTb_T_sat,
+        Grid_dTb_RSD = np.array([0]),
+        Grid_xHII = Grid_xHII,
+        Grid_xal = Grid_xal,
+        Grid_xtot = Grid_xtot,
+    )
 
 
 
@@ -535,8 +582,8 @@ def paint_ionization_profile(parameters: Parameters, output_grid: np.ndarray, ra
     profile_xHII = interp1d(
         x = radial_grid * (1 + z),
         y = x_HII_profile,
-        bounds_error=False,
-        fill_value=(1, 0)
+        bounds_error = False,
+        fill_value = (1, 0)
     )
     kernel_xHII = profile_to_3Dkernel(profile_xHII, nGrid, LBox)
     if not np.any(kernel_xHII > 0):
@@ -568,6 +615,7 @@ def paint_alpha_profile(parameters: Parameters, output_grid: np.ndarray, r_lyal,
     if isinstance(truncate, float):
         # truncate below a certain radius
         x_alpha_prof[r_lyal * (1 + z)< truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
+
     kernel_xal = stacked_lyal_kernel(
         r_lyal * (1 + z),
         x_alpha_prof,
@@ -576,6 +624,7 @@ def paint_alpha_profile(parameters: Parameters, output_grid: np.ndarray, r_lyal,
         nGrid_min = parameters.simulation.nGrid_min_lyal
     )
     renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
+
     if np.any(kernel_xal > 0):
         # Grid_xal += put_profiles_group(Pos_Halos_Grid[indices], kernel_xal * 1e-7 / np.sum(kernel_xal)) * renorm * np.sum( kernel_xal) / 1e-7  # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
         output_grid += put_profiles_group(
@@ -592,7 +641,7 @@ def paint_temperature_profile(parameters: Parameters, output_grid: np.ndarray, r
     # TODO - truncation should not be handled by the PAINT function
     if isinstance(truncate, float):
         # truncate below a certain radius
-        Temp_profile[radial_grid * (1 + z)< truncate] = Temp_profile[radial_grid * (1 + z)< truncate][-1]
+        Temp_profile[radial_grid * (1 + z) < truncate] = Temp_profile[radial_grid * (1 + z) < truncate][-1]
 
     kernel_T = stacked_T_kernel(
         radial_grid * (1 + z),

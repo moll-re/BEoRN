@@ -56,7 +56,8 @@ class RadiationProfiles:
 
     def solve(self, parameters: Parameters) -> None:
         halo_mass, halo_mass_derivative = mass_accretion(self.z_arr, parameters)
-        plot_halo_mass(halo_mass, halo_mass_derivative, parameters.simulation.halo_mass_bins, self.z_arr, parameters.source.mass_accretion_alpha_range)
+        if logger.isEnabledFor(logging.DEBUG):
+            plot_halo_mass(halo_mass, halo_mass_derivative, parameters.simulation.halo_mass_bins, self.z_arr, parameters.source.mass_accretion_alpha_range)
 
         # both arrays have shape [M_bins, alpha_bins, z_arr]
         if parameters.solver.fXh == 'constant':

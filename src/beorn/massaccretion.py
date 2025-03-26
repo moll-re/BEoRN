@@ -130,11 +130,15 @@ def plot_halo_mass(halo_mass: np.ndarray, halo_mass_derivative: np.ndarray, m_bi
     import matplotlib.pyplot as plt
     print(f"{halo_mass.shape=}, {halo_mass_derivative.shape=}, {m_bins.shape=}, {z_bins.shape=}, {alpha_bins.shape=}")
 
-    m_bin = 20
+    # plot the halo mass for a medium mass:
+    m_bin = m_bins.size // 2
+    m0_string = fr"$M_0 = {m_bins[m_bin]:.2g} M_{{\odot}}$"
     plt.figure()
     plt.xscale('log')
+    plt.xlabel('Redshift z')
+    plt.ylabel('Halo Mass [Msol]')
     plt.yscale('log')
-    plt.title(f"Halo Mass - $M = {m_bins[m_bin]:.2g}$")
+    plt.title(f"Halo Mass - {m0_string}")
     for i in range(len(alpha_bins)):
         # plot a given starting mass for all alpha values
         plt.plot(z_bins, halo_mass[m_bin, i, :], label=f"$\\alpha = {alpha_bins[i]:.2f}$")
@@ -145,7 +149,7 @@ def plot_halo_mass(halo_mass: np.ndarray, halo_mass_derivative: np.ndarray, m_bi
     plt.figure()
     plt.xscale('log')
     plt.yscale('log')
-    plt.title(f"Halo Mass derivative - $M = {m_bins[m_bin]:.2g}$")
+    plt.title(f"Halo Mass derivative - {m0_string}")
     for i in range(len(alpha_bins)):
         # plot a given starting mass for all alpha values
         plt.plot(z_bins, halo_mass_derivative[m_bin, i, :], label=f"$\\alpha = {alpha_bins[i]:.2f}$")
