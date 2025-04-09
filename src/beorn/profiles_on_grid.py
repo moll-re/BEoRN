@@ -6,7 +6,7 @@ from skimage.measure import label
 from astropy.convolution import convolve_fft
 
 from .cloud_in_cell import CIC_coefficients
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 def log_binning(array1, array2):
     """

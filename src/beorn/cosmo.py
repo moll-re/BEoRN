@@ -9,7 +9,7 @@ from scipy.integrate import cumulative_trapezoid
 from astropy.cosmology import FlatLambdaCDM
 
 from .constants import *
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 def hubble(z, parameters: Parameters):
     """

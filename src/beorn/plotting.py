@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from .constants import *
 from .functions import Beta, find_nearest
 from .cosmo import dTb_fct
-from .parameters import Parameters
+from .structs.parameters import Parameters
 from .computing_profiles import RadiationProfiles
 
 def Delta_21cm_PS_fixed_k(k,PS,plot=True):

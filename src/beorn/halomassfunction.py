@@ -7,7 +7,7 @@ import numpy as np
 import scipy.differentiate
 from .profiles_on_grid import log_binning,bin_edges_log
 from .cosmo import *
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 class HaloMassFunction:
     def __init__(self, parameters: Parameters):

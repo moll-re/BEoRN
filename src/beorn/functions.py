@@ -6,9 +6,9 @@ import numpy as np
 import os
 import tools21cm as t2c
 import pickle
-
+import h5py
 from .constants import rhoc0, Tcmb0
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 
 def load_f(file):
@@ -20,19 +20,46 @@ def save_f(file, obj):
     pickle.dump(file=open(file, 'wb'), obj=obj)
 
 
-def load_halo(parameters: Parameters, z_str):
+def load_halo(parameters: Parameters, index: int):
     # TODO - loading the halo could be implemented in the parameter data class
     """
     Load a halo catalog. Should be a pickle dictionnary. With 'M', 'X', 'Y', 'Z', and redshift 'z'.
     The halo catalogs should be in param.sim.halo_catalogs and end up with z_string
-    z is the redshift of the snapshot (outupt of z_string_format)
     """
-    if not isinstance(z_str,str):
-        z_str = z_string_format(z_str)
-    catalog_dir = parameters.simulation.halo_catalogs
-    catalog = catalog_dir + z_str
-    halo_catalog = load_f(catalog)
-    indices = np.intersect1d(np.where(halo_catalog['M'] > parameters.source.halo_mass_min),np.where(halo_catalog['M'] < parameters.source.halo_mass_max))
+    file = parameters.simulation.halo_catalogs[index]
+    # TODO - Rework this logic
+    try:
+        catalog = load_f(file)
+    except pickle.PickleError:
+        try:
+            catalog = np.loadtxt(file)
+            if catalog.shape == (0,):
+                catalog = np.ndarray((0, 4))
+        except ValueError:
+            try:
+                with h5py.File(file, 'r') as f:
+                    haloes = f['PerturbHaloField']
+                    
+                    # convert to numpy array as an intermediate step
+                    m, xyz = haloes['halo_masses'], haloes['halo_coords']
+                    catalog = np.zeros((m.size, 4))
+                    catalog[:, 0] = m
+                    catalog[:, 0] *= parameters.cosmology.h
+                    catalog[:, 1:] = xyz
+                    catalog[:, 1:] *= float(parameters.simulation.Lbox / parameters.simulation.Ncell)
+            except KeyError:
+                catalog = None
+
+    if catalog is None:
+        raise ValueError(f"Could not load halo catalog from {file}. Please check the file format and path.")
+
+    halo_catalog = {'M': catalog[:, 0], 'X': catalog[:, 1], 'Y': catalog[:, 2], 'Z': catalog[:, 3]}
+
+    # only consider the halos in the mass range (specified in the parameters) 
+    indices = np.intersect1d(
+        np.where(halo_catalog['M'] > parameters.source.halo_mass_min),
+        np.where(halo_catalog['M'] < parameters.source.halo_mass_max)
+    )
 
     for dim in ['X','Y','Z']:
         # in case you want to do High rez on a sub box of your Nbody simulation
@@ -84,7 +111,7 @@ def def_k_bins(parameters: Parameters):
 
 
 
-def load_delta_b(parameters: Parameters, zz):
+def load_delta_b(parameters: Parameters, index: int):
     """
     Parameters
     ----------
@@ -98,25 +125,22 @@ def load_delta_b(parameters: Parameters, zz):
 
     LBox = parameters.simulation.Lbox
     nGrid = parameters.simulation.Ncell
-    dens_field = parameters.simulation.dens_field
+    field_paths = parameters.simulation.density_fields
 
     if parameters.simulation.dens_field_type == 'pkdgrav':
-        if dens_field is not None:
-            print('reading pkdgrav density field....')
-            delta_b = load_pkdgrav_density_field(dens_field + zz, LBox)
-        else:
-            print('no density field provided. Return 0 for delta_b.')
-            delta_b = np.array([0])  # rho/rhomean-1 (usual delta here..)
+        if field_paths is None:
+            raise ValueError('No density fields provided.')
+        delta_b = load_pkdgrav_density_field(field_paths[index], LBox)
 
     elif parameters.simulation.dens_field_type == '21cmFAST':
-        delta_b = load_f(dens_field + zz + '.0')
+        delta_b = load_f(field_paths[index])
     elif parameters.simulation.dens_field_type == 'array':
-        delta_b = np.loadtxt(dens_field + zz)
+        delta_b = np.loadtxt(field_paths[index])
     else:
         print('param.sim.dens_field_type should be either 21cmFAST or pkdgrav.')
 
-    if nGrid != delta_b.shape[0] and dens_field is not None:
-        delta_b = reshape_grid(delta_b,nGrid)
+    if nGrid != delta_b.shape[0]:
+        delta_b = reshape_grid(delta_b, nGrid)
 
     return delta_b
 
@@ -345,6 +369,25 @@ def load_pkdgrav_density_field(file, LBox):
     delta = rho_m/rho_mean-1
     3-D mesh grid. Size (nGrid,nGrid,nGrid)
     """
+    # with h5py.File(file, 'r') as f:
+    #     # print(f"{f.keys()=}")
+    #     field = f['PerturbedField']
+    #     # print(f"{field=}")
+    #     # print(f"{field.keys()=}")
+    #     dens = field['density']
+
+    #     nGrid = dens.shape[0]
+
+    #     pkd = dens[:, :, :]
+    #     pkd = pkd.T  ### take the transpose to match X_ion map coordinates
+
+    #     V_total = LBox ** 3
+    #     V_cell = (LBox / nGrid) ** 3
+    #     mass  = (pkd * rhoc0 * V_total).astype(np.float64)
+    #     rho_m = mass / V_cell
+    #     delta_b = (rho_m) / np.mean(rho_m, dtype=np.float64) - 1
+    #     return delta_b
+
     dens = np.fromfile(file, dtype=np.float32)
     nGrid = round(dens.shape[0]**(1/3))
     pkd = dens.reshape(nGrid, nGrid, nGrid)
@@ -355,6 +398,7 @@ def load_pkdgrav_density_field(file, LBox):
     rho_m = mass / V_cell
     delta_b = (rho_m) / np.mean(rho_m, dtype=np.float64) - 1
     return delta_b
+
 
 
 

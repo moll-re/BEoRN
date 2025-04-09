@@ -3,7 +3,7 @@ import logging
 import pickle
 
 from . import paths
-from ..parameters import Parameters
+from ..structs.parameters import Parameters
 
 
 class Handler:

@@ -8,7 +8,7 @@ from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 import tools21cm as t2c
 
 from .functions import *
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 
 class Lightcone:

@@ -6,7 +6,8 @@ Slots are used to prevent the creation of new attributes. This is useful to avoi
 from pathlib import Path
 import importlib
 import numpy as np
-from dataclasses import dataclass, field, is_dataclass
+from dataclasses import dataclass, field, is_dataclass, asdict, fields
+import json
 from typing import Literal, Union
 
 import hashlib
@@ -103,7 +104,7 @@ class SimulationParameters:
         model_name: Name of the simulation, used to name all the files created.
         Ncell: Number of pixels of the final grid.
         Lbox: Box length, in [Mpc/h].
-        halo_catalogs: Path to the directory containing all the halo catalogs.
+        halo_catalogs: List of the halo catalogs corresponding to the redshifts of interest. If None, will use the 21cmFAST halo catalogs. Make sure it is consistent with the solver parameters. (same number of redshifts)
         store_grids: Whether or not to store the grids. If not, will just store the power spectra.
         dens_field: Path and name of the input density field on a grid. Used in run.py to compute dTb maps.
         dens_field_type: Can be either 21cmFAST or pkdgrav. It adapts the format and normalization of the density field.
@@ -129,7 +130,8 @@ class SimulationParameters:
     model_name: str = 'SED'
     Ncell: int = 128
     Lbox: int = 100
-    halo_catalogs: Union[str, None] = None
+    halo_catalogs: list[Path] = field(default_factory = lambda: [])
+    density_fields: list[Path] = field(default_factory = lambda: [])
     store_grids: list = ('Tk', 'bubbles', 'lyal', 'dTb')
     dens_field: Union[str, None] = None
     dens_field_type: Literal['21cmFAST', 'pkdgrav'] = 'pkdgrav'
@@ -259,10 +261,12 @@ class Parameters:
         """
         hash_list = []
         # loops over all (even nested) members and replaces them by hashable types
-        for k in self.__dataclass_fields__.keys():
-            value = getattr(self, k)
+        for field in fields(self):
+            key = field.name
+            value = getattr(self, key)
             if is_dataclass(value):
-                for kk in value.__dataclass_fields__.keys():
+                for f in fields(value):
+                    kk = f.name
                     v = getattr(value, kk)
                     hash_list.append(make_hashable(v))
             else:
@@ -280,3 +284,16 @@ def make_hashable(item):
         return item.as_posix()
     else:
         return item
+
+
+
+class ParametersEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, Path):
+            return obj.as_posix()
+        elif is_dataclass(obj):
+            return asdict(obj)
+        
+        return super().default(obj)

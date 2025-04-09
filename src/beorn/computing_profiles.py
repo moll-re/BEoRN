@@ -16,7 +16,7 @@ from .cross_sections import alpha_HII
 from .massaccretion import mass_accretion, plot_halo_mass
 from .couplings import eps_lyal
 from .cross_sections import sigma_HI, sigma_HeI
-from .parameters import Parameters
+from .structs.parameters import Parameters
 from . import constants
 # TODO: replace these unit conversions by astropy units
 from .constants import sec_per_year, m_H, M_sun, m_p_in_Msun, km_per_Mpc, h_eV_sec, cm_per_Mpc, E_HI, E_HeI, E_HeII, c_km_s, Tcmb0, kb_eV_per_K, nu_LL, rhoc0

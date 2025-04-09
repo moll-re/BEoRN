@@ -18,7 +18,7 @@ from .global_qty import xHII_approx, compute_glob_qty
 from .cosmo import dTb_factor, Tspin_fct
 from .computing_profiles import RadiationProfiles
 from .functions import *
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 
 def run_code(param, compute_profile=True, temp=True, lyal=True, ion=True, dTb=True, read_temp=False, read_ion=False,

@@ -9,7 +9,7 @@ from pathlib import Path
 from scipy.interpolate import splrep,splev
 from .constants import *
 from .cosmo import T_cmb
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 
 def kappa_coll():

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from .constants import sec_per_year, km_per_Mpc
 from .cosmo import D, hubble, Hubble
 from .halomassfunction import HaloMassFunction
-from .parameters import Parameters
+from .structs.parameters import Parameters
 
 
 def mass_accretion(z_bins, parameters: Parameters):

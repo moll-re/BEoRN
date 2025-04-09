@@ -29,14 +29,10 @@ def global_xhii_approx(param):
     return np.array((zz, xHII))
 
 
-def xHII_approx(parameters: Parameters, grid_model, halo_catalog):
+def xHII_approx(parameters: Parameters, halo_mass_history, r_bubble_history, halo_catalog):
     ## compute mean ion fraction from Rbubble values and halo catalog.  for the simple bubble solver
     LBox = parameters.simulation.Lbox  # Mpc/h
     H_Masses = halo_catalog['M']
-    z = halo_catalog['z']
-
-    ind_z = np.argmin(np.abs(grid_model.z_history - z))
-    zgrid = grid_model.z_history[ind_z]
 
     # remove element smaller than minimum SF halo mass.
     H_Masses = np.delete(
@@ -45,7 +41,7 @@ def xHII_approx(parameters: Parameters, grid_model, halo_catalog):
     )
 
     # TODO - remove hardcoded alpha index
-    Mh_z_bin = grid_model.Mh_history[..., 5, ind_z]
+    Mh_z_bin = halo_mass_history
     Mh_bin_array = np.concatenate((
         [Mh_z_bin[0] / 2],
         np.sqrt(Mh_z_bin[1:] * Mh_z_bin[:-1]),
@@ -60,13 +56,13 @@ def xHII_approx(parameters: Parameters, grid_model, halo_catalog):
     bins, number_per_bins = np.unique(bins, return_counts=True)
     bins = bins.clip(max=len(parameters.simulation.halo_mass_bins))
     ### Ionisation
-    Bubble_radii = grid_model.R_bubble[bins - 1, 5, ind_z]
+    Bubble_radii = r_bubble_history[bins - 1]
     Bubble_covol = 4 / 3 * np.pi * Bubble_radii ** 3
     Ionized_covolume = np.sum(Bubble_covol * number_per_bins)
     Ionized_fraction = Ionized_covolume / LBox ** 3
     x_HII = Ionized_fraction.clip(max=1)
 
-    return zgrid, x_HII
+    return x_HII
 
 
 def compute_glob_qty(parameters: Parameters, grid_model: "RadiationProfiles") -> dict:

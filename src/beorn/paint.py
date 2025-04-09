@@ -1,15 +1,15 @@
 import time
 import logging
-import copy
 import numpy as np
-from dataclasses import dataclass
 import tools21cm as t2c
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 logger = logging.getLogger(__name__)
 
-from .parameters import Parameters
+from .structs.parameters import Parameters
 from .io import Handler
+from .structs import GridData, GridDataMultiZ, SnapshotQuantities
+
 from .functions import def_redshifts, z_string_format, load_halo, load_delta_b, delta_fct, def_k_bins, pixel_position, smooth_field
 from .cosmo import dTb_factor, dTb_fct, T_adiab_fluctu, Tspin_fct
 from . import constants
@@ -20,70 +20,6 @@ from .run import dTb_RSD, compute_cross_correlations, compute_var_single_z
 from .global_qty import xHII_approx
 from .profiles_on_grid import average_profile, cumulated_number_halos, profile_to_3Dkernel, put_profiles_group, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
 
-
-
-@dataclass(slots = True)
-class GridQuantities:
-    # power spectrum scalings
-    k_bins: np.ndarray
-    # actual spectra
-    PS_dTb: np.ndarray
-    PS_dTb_RSD: np.ndarray
-    PS_dTb_no_reio: np.ndarray
-    PS_dTb_T_sat: np.ndarray
-    T_spin: float
-    dTb_RSD_mean: float
-
-
-@dataclass(slots = True)
-class GridData:
-    delta_b: np.ndarray
-    # temperature profiles
-    Grid_Temp: np.ndarray
-    Grid_dTb: np.ndarray
-    Grid_dTb_no_reio: np.ndarray
-    Grid_dTb_T_sat: np.ndarray
-    Grid_dTb_RSD: np.ndarray
-    # ionization profiles
-    Grid_xHII: np.ndarray
-    # Lyman alpha profiles
-    Grid_xal: np.ndarray
-    Grid_xtot: np.ndarray
-
-    # TODO some of these should not need to be precomputed - they could be made available as properties
-
-
-
-
-
-@dataclass(slots=True)
-class GridDataMultiZ:
-    z: np.ndarray  # Array of redshift values
-    grid_data: list[GridData]  # List of GridData objects corresponding to each redshift
-
-    ## The properties below are deliberately named the same way as in the GridData class
-    # This way we can query the properties of the GridData objects as a z-indexed array 
-    @property
-    def Grid_Temp(self) -> np.ndarray:
-        return np.array([gd.Grid_Temp for gd in self.grid_data])
-
-    @property
-    def Grid_dTb(self) -> np.ndarray:
-        return np.array([gd.Grid_dTb for gd in self.grid_data])
-
-    @property
-    def Grid_xHII(self) -> np.ndarray:
-        return np.array([gd.Grid_xHII for gd in self.grid_data])
-    
-    @property
-    def Grid_xal(self) -> np.ndarray:
-        return np.array([gd.Grid_xal for gd in self.grid_data])
-    
-    @property
-    def Grid_xtot(self) -> np.ndarray:
-        return np.array([gd.Grid_xtot for gd in self.grid_data])
-    
-    # TODO - the rest
 
 
 
@@ -130,24 +66,29 @@ def paint_boxes(
     # comm, rank, size = initialise_mpi4py(parameters)
 
     z_arr = def_redshifts(parameters)
-    grid_data_full = []
     logger.info(f'Painting profiles for {len(z_arr)} z snapshots. Using a grid with {nGrid=} (pixels per dim) and a box size of {LBox=} cMpc/h.')
+
+    multi_z_data = GridDataMultiZ(parameters=parameters, file_root=output_handler.file_root)
     # TODO - this loop could be parallelized using MPI
     for ii, z in enumerate(z_arr):
         z = np.round(z, 2)
         # if rank == ii % size:
         # print('Core nbr', rank, 'is taking care of z = ', z)
-        if cache_handler is not None:
+        if cache_handler is not None and output_handler is not None:
             try:
-                cache_handler.load_file(parameters, GridQuantities, z=z)
+                SnapshotQuantities.read(output_handler.file_root, parameters, z=z)
+                GridData.read(cache_handler.file_root, parameters, z=z)
+                logger.debug(f"Found painted output in cache for {z=}. Skipping.")
                 continue
             except FileNotFoundError:
-                pass
                 logger.debug("Painted output not found in cache. Processing now")
+        else:
+            logger.debug("No cache or output handler provided. Processing now")
 
         # there is no cache or the cache does not contain the halo catalog - compute it fresh
         logger.debug(f'Painting 3D map for {z=}')
         grid_data = paint_profiles_single_z(
+            ii,
             z,
             parameters,
             cache_handler=cache_handler,
@@ -161,7 +102,6 @@ def paint_boxes(
             Rsmoothing=Rsmoothing,
             truncate=truncate
         )
-        grid_data_full.append(grid_data)
 
         grid_quantities = compute_quantities_single_z(
             z,
@@ -175,19 +115,15 @@ def paint_boxes(
             variance=variance,
         )
 
-        # INSTEAD OF WRITING THE DATA IN EACH LOOP, WE CAN WRITE IT IN THE END
+        if cache_handler is not None:
+            grid_data.write(cache_handler.file_root, z=z)
         if output_handler is not None:
-            output_handler.write_file(parameters, grid_quantities, z=z)
-
-    if output_handler is not None and parameters.simulation.store_grids:
-        grid_data_multi_z = GridDataMultiZ(
-            z = z_arr,
-            grid_data = grid_data_full
-        )
-        output_handler.write_file(parameters, grid_data_multi_z)
+            grid_quantities.write(output_handler.file_root, z=z)
+    
+        multi_z_data.append(grid_data, z=z)
 
     logger.info(f"Paining finished! Elapsed time: {time.process_time() - start_time:.2} seconds")
-
+    return multi_z_data
 
 
 def compute_quantities_single_z(
@@ -200,7 +136,7 @@ def compute_quantities_single_z(
     fourth_order = False,
     variance = False,
     truncate = False
-) -> GridQuantities:
+) -> SnapshotQuantities:
     T_spin = np.mean(Tspin_fct(constants.Tcmb0 * (1 + z), data.Grid_Temp, data.Grid_xtot))
 
 
@@ -247,18 +183,17 @@ def compute_quantities_single_z(
     #               'PS_dTb_T_sat':PS_dTb_T_sat,'dTb_T_sat': np.mean(data.Grid_dTb_T_sat)}
 
 
-    # if cross_corr:
-    #     GS_PS_dict = compute_cross_correlations(
-    #         parameters,
-    #         GS_PS_dict,
-    #         data.Grid_Temp,
-    #         data.Grid_xHII,
-    #         data.Grid_xal,data.Grid_dTb,
-    #         data.delta_b,
-    #         third_order = third_order,
-    #         fourth_order = fourth_order,
-    #         truncate = truncate
-    #     )
+    if cross_corr:
+        q1, q2, q3 = compute_cross_correlations(
+            parameters,
+            data.Grid_Temp,
+            data.Grid_xHII,
+            data.Grid_xal,data.Grid_dTb,
+            data.delta_b,
+            third_order = third_order,
+            fourth_order = fourth_order,
+            truncate = truncate
+        )
 
     if variance:
         # we do this since in compute_var we change the kbins to go to smaller scales.
@@ -267,7 +202,8 @@ def compute_quantities_single_z(
         # TODO - DO NOT EXPORT THIS AS A SEPARATE FILE!!
         compute_var_single_z(parameters, z, data.Grid_xal, data.Grid_xHII, data.Grid_Temp, data.delta_b, k_bins)
 
-    return GridQuantities(
+    return SnapshotQuantities(
+        parameters = parameters,
         k_bins = k_bins,
         PS_dTb = PS_dTb,
         PS_dTb_RSD = PS_dTb_RSD,
@@ -281,6 +217,7 @@ def compute_quantities_single_z(
 
 
 def paint_profiles_single_z(
+    redshift_index: int,
     z: float,
     parameters: Parameters,
     cache_handler: Handler = None,
@@ -315,25 +252,26 @@ def paint_profiles_single_z(
 
     LBox = parameters.simulation.Lbox  # Mpc/h
     nGrid = parameters.simulation.Ncell  # number of grid cells
+    zeros = np.zeros((nGrid, nGrid, nGrid))
 
     z_string = z_string_format(z)
-    try:
-        halo_catalog = load_halo(parameters, z_string)
-    except:
-        # TODO - I am convinced this never worked
-        halo_catalog = parameters.simulation.halo_catalogs[float(z_string)]
+    # try:
+    halo_catalog = load_halo(parameters, redshift_index)
+    # except:
+    #     # TODO - I am convinced this never worked
+    #     halo_catalog = parameters.simulation.halo_catalogs[float(z_string)]
 
-    H_Masses, H_X, H_Y, H_Z, z = halo_catalog['M'], halo_catalog['X'], halo_catalog['Y'], halo_catalog['Z'], halo_catalog['z']
+    H_Masses, H_X, H_Y, H_Z = halo_catalog['M'], halo_catalog['X'], halo_catalog['Y'], halo_catalog['Z']
 
     ### To later add up the adiabatic Tk fluctuations at the grid level.
     if temp or dTb:
         try:
-            delta_b = load_delta_b(parameters, z_string)  # rho/rhomean-1
+            delta_b = load_delta_b(parameters, redshift_index)  # rho/rhomean-1
         except:
             # TODO - same here???
             delta_b = parameters.simulation.dens_field[float(z_string)] #param.sim.dens_fields[z_str]
     else:
-        delta_b = np.array([0])
+        delta_b = zeros
 
     coef = constants.rhoc0 * parameters.cosmology.h ** 2 * parameters.cosmology.Ob * (1 + z) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
 
@@ -363,18 +301,19 @@ def paint_profiles_single_z(
 
         factor = dTb_factor(parameters)
 
-        Grid_xHII = np.array([0])
         Grid_Temp = T_adiab_fluctu(z, parameters, delta_b)
+        Grid_xHII = zeros
 
-        Grid_xal = np.array([0])
+        Grid_xal = zeros
         Grid_xcoll = x_coll(z=z, Tk=Grid_Temp, xHI=(1 - Grid_xHII), rho_b=(delta_b + 1) * coef)
         Grid_dTb = factor * np.sqrt(1 + z) * (1 - constants.Tcmb0 * (1 + z) / Grid_Temp) * (1 - Grid_xHII) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
         Grid_dTb_no_reio = factor * np.sqrt(1 + z) * (1 - constants.Tcmb0 * (1 + z) / Grid_Temp) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
-        Grid_dTb_RSD = np.array([0])
+        Grid_dTb_RSD = zeros
         Grid_dTb_T_sat = factor * np.sqrt(1 + z) * (1 - Grid_xHII) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
         xcoll_mean = np.mean(Grid_xcoll)
         
         return GridData(
+            parameters = parameters,
             delta_b = delta_b,
             Grid_Temp = Grid_Temp,
             Grid_dTb = Grid_dTb,
@@ -396,28 +335,34 @@ def paint_profiles_single_z(
     if np.min(H_Masses) < np.min(grid_model.Mh_history[..., ind_z]):
         print('WARNING!!! You should use a smaller value for param.sim.Mh_bin_min')
 
-    _, Ionized_vol = xHII_approx(parameters, grid_model, halo_catalog)
+    Ionized_vol = xHII_approx(
+        parameters,
+        grid_model.Mh_history[..., 5, ind_z],
+        grid_model.R_bubble[..., 5, ind_z],
+        halo_catalog
+        )
     logger.info(f'Quick calculation from the profiles predicts xHII = {Ionized_vol:.4}')
     if Ionized_vol > 1:
         logger.info('Universe is fully ionized. Returning [1] for xHII, T and [0] for dTb.')
-        Grid_xHII = np.array([1])
-        Grid_Temp = np.array([1])
-        Grid_dTb = np.array([0])
-        Grid_dTb_no_reio = np.array([0])
-        Grid_dTb_T_sat = np.array([0])
-        Grid_xal = np.array([0])
+        Grid_xHII = zeros + 1
+        Grid_Temp = zeros + 1
+        Grid_dTb = zeros
+        Grid_dTb_no_reio = zeros
+        Grid_dTb_T_sat = zeros
+        Grid_xal = zeros
         return GridData(
+            parameters = parameters,
             delta_b = delta_b,
             Grid_Temp = Grid_Temp,
             Grid_dTb = Grid_dTb,
             Grid_dTb_no_reio = Grid_dTb_no_reio,
             Grid_dTb_T_sat = Grid_dTb_T_sat,
             # TODO - what should the value be?
-            Grid_dTb_RSD = np.array([0]),
+            Grid_dTb_RSD = zeros,
             Grid_xHII = Grid_xHII,
             Grid_xal = Grid_xal,
             # TODO - what value for xtot?
-            Grid_xtot = np.array([0]),
+            Grid_xtot = zeros
         )
 
 
@@ -465,7 +410,6 @@ def paint_profiles_single_z(
             x_HII_profile = np.zeros((len(radial_grid)))
             x_HII_profile[np.where(radial_grid < R_bubble / (1 + zgrid))] = 1
 
-            logger.warning('Painting ionization profile')
             # modify Grid_xHII in place
             paint_ionization_profile(
                 parameters, Grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, z, XX_indice, YY_indice, ZZ_indice, nbr_of_halos
@@ -562,6 +506,7 @@ def paint_profiles_single_z(
         Grid_dTb_T_sat = np.array([0])
 
     return GridData(
+        parameters = parameters,
         delta_b = delta_b,
         Grid_Temp = Grid_Temp,
         Grid_dTb = Grid_dTb,
@@ -658,3 +603,6 @@ def paint_temperature_profile(parameters: Parameters, output_grid: np.ndarray, r
             nbr_of_halos,
             kernel_T * 1e-7 / np.sum(kernel_T)
         ) * np.sum(kernel_T) / 1e-7 * renorm
+
+
+
