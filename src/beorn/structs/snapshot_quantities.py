@@ -10,9 +10,13 @@ class SnapshotQuantities(BaseStruct):
     """
     Class representing spectral quantities for a single redshift snapshot.
     """
+    z: float
     # power spectrum scalings
+    # TODO - these are implicit from the parameters
     k_bins: np.ndarray
-    # actual spectra
+
+    # actual quantities
+    # TODO - rename these to be more descriptive
     PS_dTb: np.ndarray
     PS_dTb_RSD: np.ndarray
     PS_dTb_no_reio: np.ndarray
@@ -21,3 +25,5 @@ class SnapshotQuantities(BaseStruct):
     dTb_RSD_mean: float
 
 
+    third_order_power_spectra: dict[str, np.ndarray] = None
+    fourth_order_power_spectra: dict[str, np.ndarray] = None

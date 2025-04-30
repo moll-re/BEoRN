@@ -16,7 +16,7 @@ from .profiles_on_grid import profile_to_3Dkernel, spreading_excess_fast, put_pr
 from .couplings import x_coll, S_alpha, x_coll_coef
 from .global_qty import xHII_approx, compute_glob_qty
 from .cosmo import dTb_factor, Tspin_fct
-from .computing_profiles import RadiationProfiles
+from .computing_profiles import ProfileSolver
 from .functions import *
 from .structs.parameters import Parameters
 
@@ -115,7 +115,7 @@ def compute_profiles(parameters: Parameters) -> None:
 
     model_name = parameters.simulation.model_name
     pkl_name = './profiles/' + model_name + '.pkl'
-    grid_model = RadiationProfiles(parameters)
+    grid_model = ProfileSolver(parameters)
     grid_model.solve(parameters)
     pickle.dump(file=open(pkl_name, 'wb'), obj=grid_model)
     print('...  Profiles stored in dir ./profiles.')

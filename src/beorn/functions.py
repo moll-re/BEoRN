@@ -30,7 +30,7 @@ def load_halo(parameters: Parameters, index: int):
     # TODO - Rework this logic
     try:
         catalog = load_f(file)
-    except pickle.PickleError:
+    except pickle.UnpicklingError:
         try:
             catalog = np.loadtxt(file)
             if catalog.shape == (0,):
@@ -39,9 +39,9 @@ def load_halo(parameters: Parameters, index: int):
             try:
                 with h5py.File(file, 'r') as f:
                     haloes = f['PerturbHaloField']
-                    
                     # convert to numpy array as an intermediate step
                     m, xyz = haloes['halo_masses'], haloes['halo_coords']
+
                     catalog = np.zeros((m.size, 4))
                     catalog[:, 0] = m
                     catalog[:, 0] *= parameters.cosmology.h
@@ -53,7 +53,10 @@ def load_halo(parameters: Parameters, index: int):
     if catalog is None:
         raise ValueError(f"Could not load halo catalog from {file}. Please check the file format and path.")
 
-    halo_catalog = {'M': catalog[:, 0], 'X': catalog[:, 1], 'Y': catalog[:, 2], 'Z': catalog[:, 3]}
+    if isinstance(catalog, dict):
+        halo_catalog = catalog
+    else:
+        halo_catalog = {'M': catalog[:, 0], 'X': catalog[:, 1], 'Y': catalog[:, 2], 'Z': catalog[:, 3]}
 
     # only consider the halos in the mass range (specified in the parameters) 
     indices = np.intersect1d(
@@ -133,7 +136,8 @@ def load_delta_b(parameters: Parameters, index: int):
         delta_b = load_pkdgrav_density_field(field_paths[index], LBox)
 
     elif parameters.simulation.dens_field_type == '21cmFAST':
-        delta_b = load_f(field_paths[index])
+        delta_b = load_21cmfast_density_field(field_paths[index], LBox)
+
     elif parameters.simulation.dens_field_type == 'array':
         delta_b = np.loadtxt(field_paths[index])
     else:
@@ -369,25 +373,6 @@ def load_pkdgrav_density_field(file, LBox):
     delta = rho_m/rho_mean-1
     3-D mesh grid. Size (nGrid,nGrid,nGrid)
     """
-    # with h5py.File(file, 'r') as f:
-    #     # print(f"{f.keys()=}")
-    #     field = f['PerturbedField']
-    #     # print(f"{field=}")
-    #     # print(f"{field.keys()=}")
-    #     dens = field['density']
-
-    #     nGrid = dens.shape[0]
-
-    #     pkd = dens[:, :, :]
-    #     pkd = pkd.T  ### take the transpose to match X_ion map coordinates
-
-    #     V_total = LBox ** 3
-    #     V_cell = (LBox / nGrid) ** 3
-    #     mass  = (pkd * rhoc0 * V_total).astype(np.float64)
-    #     rho_m = mass / V_cell
-    #     delta_b = (rho_m) / np.mean(rho_m, dtype=np.float64) - 1
-    #     return delta_b
-
     dens = np.fromfile(file, dtype=np.float32)
     nGrid = round(dens.shape[0]**(1/3))
     pkd = dens.reshape(nGrid, nGrid, nGrid)
@@ -400,7 +385,13 @@ def load_pkdgrav_density_field(file, LBox):
     return delta_b
 
 
+def load_21cmfast_density_field(file, LBox):
+    with h5py.File(file, 'r') as f:
+        field = f['PerturbedField']
+        dens = field['density']
 
+        dens_array = dens[:]
+        return dens_array
 
 def pixel_position(X,Y,Z,LBox,nGrid):
     """

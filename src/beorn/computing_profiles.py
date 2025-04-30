@@ -16,7 +16,9 @@ from .cross_sections import alpha_HII
 from .massaccretion import mass_accretion, plot_halo_mass
 from .couplings import eps_lyal
 from .cross_sections import sigma_HI, sigma_HeI
+from .io import Handler
 from .structs.parameters import Parameters
+from .structs.radiation_profiles import RadiationProfiles
 from . import constants
 # TODO: replace these unit conversions by astropy units
 from .constants import sec_per_year, m_H, M_sun, m_p_in_Msun, km_per_Mpc, h_eV_sec, cm_per_Mpc, E_HI, E_HeI, E_HeII, c_km_s, Tcmb0, kb_eV_per_K, nu_LL, rhoc0
@@ -25,7 +27,7 @@ from .functions import def_redshifts
 from .astro import f_Xh, f_star_Halo, f_esc, eps_xray
 
 
-class RadiationProfiles:
+class ProfileSolver:
     """
     Computes the 1D profiles. Similar to the HM for 21cm (Schneider et al 2021)
 
@@ -38,7 +40,7 @@ class RadiationProfiles:
     Mhistory has shape [zz, Mass]
     """
 
-    def __init__(self, parameters: Parameters):
+    def __init__(self, parameters: Parameters, handler: Handler):
         self.z_initial = parameters.solver.z_max  # starting redshift
         if self.z_initial < 35:
             # TODO: add this warning as a validator of the parameters dataclass
@@ -48,47 +50,49 @@ class RadiationProfiles:
         rmin = 1e-2
         rmax = 600
         Nr = 200
-        rr = np.logspace(np.log10(rmin), np.log10(rmax), Nr)
-        self.r_grid = rr  ##cMpc/h
+        self.r_grid = np.logspace(np.log10(rmin), np.log10(rmax), Nr) ##cMpc/h
+        self.parameters = parameters
+        self.handler = handler
+        # self.z_arr = np.flip(np.sort(np.unique(np.concatenate((def_redshifts(parameters),np.arange(6,40,0.5))))))  ## we add up some redshifts to be converged
 
-        self.z_arr = np.flip(np.sort(np.unique(np.concatenate((def_redshifts(parameters),np.arange(6,40,0.5))))))  ## we add up some redshifts to be converged
 
-
-    def solve(self, parameters: Parameters) -> None:
-        halo_mass, halo_mass_derivative = mass_accretion(self.z_arr, parameters)
+    def solve(self) -> RadiationProfiles:
+        z_arr = self.parameters.solver.Nz
+        halo_mass, halo_mass_derivative = mass_accretion(z_arr, self.parameters)
         if logger.isEnabledFor(logging.DEBUG):
-            plot_halo_mass(halo_mass, halo_mass_derivative, parameters.simulation.halo_mass_bins, self.z_arr, parameters.source.mass_accretion_alpha_range)
+            plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.source.mass_accretion_alpha_range)
 
         # both arrays have shape [M_bins, alpha_bins, z_arr]
-        if parameters.solver.fXh == 'constant':
+        if self.parameters.solver.fXh == 'constant':
             logger.info('param.solver.fXh is set to constant. We will assume f_X,h = 2e-4**0.225')
-            x_e = np.full(len(self.z_arr), 2e-4)
+            x_e = np.full(len(z_arr), 2e-4)
         else:
-            zz_, sfrd_ = global_qty.compute_sfrd(parameters, self.z_arr, halo_mass, halo_mass_derivative)
-            sfrd = np.interp(self.z_arr, zz_, sfrd_, right=0)
-            Gamma_ion, Gamma_sec_ion = mean_gamma_ion_xray(parameters, sfrd, self.z_arr)
+            zz_, sfrd_ = global_qty.compute_sfrd(self.parameters, z_arr, halo_mass, halo_mass_derivative)
+            sfrd = np.interp(z_arr, zz_, sfrd_, right=0)
+            Gamma_ion, Gamma_sec_ion = mean_gamma_ion_xray(self.parameters, sfrd, z_arr)
             self.Gamma_ion = Gamma_ion
             self.Gamma_sec_ion = Gamma_sec_ion
             self.sfrd = np.array((zz_,sfrd_))
-            x_e = solve_xe(parameters, Gamma_ion, Gamma_sec_ion, self.z_arr)
+            x_e = solve_xe(self.parameters, Gamma_ion, Gamma_sec_ion, z_arr)
             logger.info('param.solver.fXh is not set to constant. We will compute the free e- fraction x_e and assume fXh = x_e**0.225.')
 
-        logger.info(f"Computing profiles for {len(self.z_arr)} redshifts")
-        R_bubble_ = R_bubble(parameters, self.z_arr, halo_mass, halo_mass_derivative).clip(min=0) # cMpc/h
+        logger.info(f"Computing profiles for {len(z_arr)} redshifts")
+        R_bubble_ = R_bubble(self.parameters, z_arr, halo_mass, halo_mass_derivative).clip(min=0) # cMpc/h
 
-        rho_xray_ = rho_xray(parameters, self.z_arr, self.r_grid, halo_mass, halo_mass_derivative, x_e)
-        rho_heat_ = rho_heat(parameters, self.z_arr, self.r_grid, rho_xray_)
+        rho_xray_ = rho_xray(self.parameters, z_arr, self.r_grid, halo_mass, halo_mass_derivative, x_e)
+        rho_heat_ = rho_heat(self.parameters, z_arr, self.r_grid, rho_xray_)
 
         r_lyal = np.logspace(-5, 2, 1000, base=10)  ##    physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
-        rho_alpha = rho_alpha_profile(parameters, self.z_arr, r_lyal, halo_mass, halo_mass_derivative)
+        rho_alpha = rho_alpha_profile(self.parameters, z_arr, r_lyal, halo_mass, halo_mass_derivative)
         # TODO assert correct shapes here!
         logger.debug(f"Results have shapes: {rho_xray_.shape=}, {rho_heat_.shape=}, {R_bubble_.shape=}, {r_lyal.shape=}, {rho_alpha.shape=}")
         
-        self.r_lyal = r_lyal
-        self.rho_alpha = rho_alpha
+        # self.r_lyal = r_lyal
+        # self.rho_alpha = rho_alpha
 
-        self.x_e = x_e
-        self.rho_xray_ = rho_xray_
+        # self.x_e = x_e
+        # TODO x_e might be needed?
+        # self.rho_xray_ = rho_xray_
         # TODO - what is this?
         # T_history = {}
         # rhox_history = {}
@@ -96,25 +100,37 @@ class RadiationProfiles:
         #     T_history[str(zz[i])] = rho_heat_[i]
         #     rhox_history[str(zz[i])] =rho_xray_[i]
 
-        if parameters.simulation.average_profiles_in_bin:
-            halo_mass_HR, halo_mass_derivative_HR = mass_accretion(self.z_arr, parameters)
-            self.rho_alpha_HR = rho_alpha_profile(parameters, self.z_arr, r_lyal, halo_mass_HR, halo_mass_derivative_HR)
-            self.rho_xray_HR = rho_xray(parameters, self.z_arr, self.r_grid, halo_mass_HR, halo_mass_derivative_HR, x_e)
-            self.rho_heat_HR = rho_heat(parameters, self.z_arr, self.r_grid, self.rho_xray_HR)
-            self.R_bubble_HR = R_bubble(parameters, self.z_arr, halo_mass_HR, halo_mass_derivative_HR).clip(min=0)  # cMpc/h
-            self.halo_mass_HR = halo_mass_HR
-            self.halo_mass_derivative_HR = halo_mass_derivative_HR
+        # if parameters.simulation.average_profiles_in_bin:
+        #     halo_mass_HR, halo_mass_derivative_HR = mass_accretion(z_arr, parameters)
+        #     self.rho_alpha_HR = rho_alpha_profile(parameters, z_arr, r_lyal, halo_mass_HR, halo_mass_derivative_HR)
+        #     self.rho_xray_HR = rho_xray(parameters, z_arr, self.r_grid, halo_mass_HR, halo_mass_derivative_HR, x_e)
+        #     self.rho_heat_HR = rho_heat(parameters, z_arr, self.r_grid, self.rho_xray_HR)
+        #     self.R_bubble_HR = R_bubble(parameters, z_arr, halo_mass_HR, halo_mass_derivative_HR).clip(min=0)  # cMpc/h
+        #     self.halo_mass_HR = halo_mass_HR
+        #     self.halo_mass_derivative_HR = halo_mass_derivative_HR
 
+
+        return RadiationProfiles(
+            z_history = z_arr,
+            Mh_history = halo_mass,
+            dMh_dt = halo_mass_derivative,
+            rho_xray = rho_xray_,
+            rho_heat = rho_heat_,
+            rho_alpha = rho_alpha,
+            R_bubble = R_bubble_,
+            r_lyal = r_lyal,
+            r_grid_cell = self.r_grid,
+        )
         #self.rhox_history = rhox_history
         # TODO - rename these to be fit snake_case and to be consistent
         self.Mh_history = halo_mass
         self.dMh_dt = halo_mass_derivative
-        self.z_history = self.z_arr
+        self.z_history = z_arr
         self.R_bubble = R_bubble_     # cMpc/h (zz,M)
         #self.T_history = T_history    # Kelvins
         self.rho_heat = rho_heat_           #shape (z,r,M)
         self.r_grid_cell = self.r_grid
-        self.Ngdot_ion = Ngdot_ion(parameters, self.z_arr, halo_mass,halo_mass_derivative)
+        self.Ngdot_ion = Ngdot_ion(parameters, z_arr, halo_mass,halo_mass_derivative)
 
 
 

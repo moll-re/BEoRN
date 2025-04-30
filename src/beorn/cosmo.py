@@ -69,6 +69,7 @@ def T_adiab(z, parameters: Parameters):
     """
     Temperature of the gas assuming it decoupled from CMB at z = parameters.cosmology.z_decoupl and then cooled adiabatically.
     """
+    # TODO - compare with https://docs.astropy.org/en/stable/api/astropy.cosmology.units.redshift_temperature.html#astropy.cosmology.units.redshift_temperature
     return Tcmb0 * (1 + z) ** 2 / (1 + parameters.cosmology.z_decoupling)
 
 def T_adiab_fluctu(z, parameters: Parameters, delta_b):
@@ -76,7 +77,7 @@ def T_adiab_fluctu(z, parameters: Parameters, delta_b):
     Fluctuating adiabatic background.
     delta_b : matter overdensity
     """
-    return T_adiab(z,parameters) * (1 + delta_b) ** (2 / 3)
+    return T_adiab(z, parameters) * (1 + delta_b) ** (2 / 3)
 
 
 

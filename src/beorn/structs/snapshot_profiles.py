@@ -7,6 +7,7 @@ class GridData(BaseStruct):
     """
     Class representing the grid data for a single redshift snapshot.
     """
+    z: float
     delta_b: np.ndarray
     # temperature profiles
     Grid_Temp: np.ndarray
@@ -21,4 +22,3 @@ class GridData(BaseStruct):
     Grid_xtot: np.ndarray
 
     # TODO some of these should not need to be precomputed - they could be made available as properties
-

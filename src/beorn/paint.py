@@ -13,10 +13,10 @@ from .structs import GridData, GridDataMultiZ, SnapshotQuantities
 from .functions import def_redshifts, z_string_format, load_halo, load_delta_b, delta_fct, def_k_bins, pixel_position, smooth_field
 from .cosmo import dTb_factor, dTb_fct, T_adiab_fluctu, Tspin_fct
 from . import constants
-from .computing_profiles import RadiationProfiles
+from .computing_profiles import ProfileSolver
 from .profiles_on_grid import bin_edges_log, log_binning
 from .couplings import x_coll, S_alpha
-from .run import dTb_RSD, compute_cross_correlations, compute_var_single_z
+from .run import dTb_RSD
 from .global_qty import xHII_approx
 from .profiles_on_grid import average_profile, cumulated_number_halos, profile_to_3Dkernel, put_profiles_group, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
 
@@ -183,27 +183,28 @@ def compute_quantities_single_z(
     #               'PS_dTb_T_sat':PS_dTb_T_sat,'dTb_T_sat': np.mean(data.Grid_dTb_T_sat)}
 
 
-    if cross_corr:
-        q1, q2, q3 = compute_cross_correlations(
-            parameters,
-            data.Grid_Temp,
-            data.Grid_xHII,
-            data.Grid_xal,data.Grid_dTb,
-            data.delta_b,
-            third_order = third_order,
-            fourth_order = fourth_order,
-            truncate = truncate
-        )
+    # if cross_corr:
+    #     q1, q2, q3 = compute_cross_correlations(
+    #         parameters,
+    #         data.Grid_Temp,
+    #         data.Grid_xHII,
+    #         data.Grid_xal,data.Grid_dTb,
+    #         data.delta_b,
+    #         third_order = third_order,
+    #         fourth_order = fourth_order,
+    #         truncate = truncate
+    #     )
 
-    if variance:
-        # we do this since in compute_var we change the kbins to go to smaller scales.
-        # TODO - why was it deepcopied?
-        # param_copy = copy.deepcopy(parameters)
-        # TODO - DO NOT EXPORT THIS AS A SEPARATE FILE!!
-        compute_var_single_z(parameters, z, data.Grid_xal, data.Grid_xHII, data.Grid_Temp, data.delta_b, k_bins)
+    # if variance:
+    #     # we do this since in compute_var we change the kbins to go to smaller scales.
+    #     # TODO - why was it deepcopied?
+    #     # param_copy = copy.deepcopy(parameters)
+    #     # TODO - DO NOT EXPORT THIS AS A SEPARATE FILE!!
+    #     compute_var_single_z(parameters, z, data.Grid_xal, data.Grid_xHII, data.Grid_Temp, data.delta_b, k_bins)
 
     return SnapshotQuantities(
         parameters = parameters,
+        z = z,
         k_bins = k_bins,
         PS_dTb = PS_dTb,
         PS_dTb_RSD = PS_dTb_RSD,
@@ -265,11 +266,11 @@ def paint_profiles_single_z(
 
     ### To later add up the adiabatic Tk fluctuations at the grid level.
     if temp or dTb:
-        try:
-            delta_b = load_delta_b(parameters, redshift_index)  # rho/rhomean-1
-        except:
-            # TODO - same here???
-            delta_b = parameters.simulation.dens_field[float(z_string)] #param.sim.dens_fields[z_str]
+        # try:
+        delta_b = load_delta_b(parameters, redshift_index)  # rho/rhomean-1
+        # except:
+        #     # TODO - same here???
+        #     delta_b = parameters.simulation.dens_field[float(z_string)] #param.sim.dens_fields[z_str]
     else:
         delta_b = zeros
 
@@ -278,7 +279,7 @@ def paint_profiles_single_z(
     # find matching redshift between solver output and simulation snapshot.
     # this will raise an error if the needed profiles are not available
     # The loading is left in this function to allow for the possibility of parallelizing the painting
-    grid_model: RadiationProfiles = cache_handler.load_file(parameters, RadiationProfiles)
+    grid_model: ProfileSolver = cache_handler.load_file(parameters, ProfileSolver)
     ind_z = np.argmin(np.abs(grid_model.z_history - z))
     zgrid = grid_model.z_history[ind_z]
 
@@ -392,7 +393,7 @@ def paint_profiles_single_z(
         R_bubble, rho_alpha_, Temp_profile = average_profile(parameters, grid_model, H_Masses[indices], ind_z, i)
         logger.debug(
             "Computing average profiles: "
-            f"{grid_model.R_bubble.shape=} -> {R_bubble.shape=}, "
+            f"{grid_model.R_bubble.shape=} -> {R_bubble=}, "
             f"{grid_model.rho_heat.shape=} -> {Temp_profile.shape}, "
             f"{grid_model.rho_alpha.shape=} -> {rho_alpha_.shape}"
         )
@@ -440,7 +441,7 @@ def paint_profiles_single_z(
     if ion and np.sum(Grid_xHII) < nGrid ** 3:
         Grid_xHII = spreading_excess_fast(parameters, Grid_xHII)
     else:
-        Grid_xHII = np.array([1])
+        Grid_xHII = zeros + 1
 
     logger.info(f'Overlap processing done. Took {time.process_time() - start_time:.2} seconds.')
 
@@ -603,6 +604,4 @@ def paint_temperature_profile(parameters: Parameters, output_grid: np.ndarray, r
             nbr_of_halos,
             kernel_T * 1e-7 / np.sum(kernel_T)
         ) * np.sum(kernel_T) / 1e-7 * renorm
-
-
 

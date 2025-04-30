@@ -130,16 +130,17 @@ class SimulationParameters:
     model_name: str = 'SED'
     Ncell: int = 128
     Lbox: int = 100
-    halo_catalogs: list[Path] = field(default_factory = lambda: [])
-    density_fields: list[Path] = field(default_factory = lambda: [])
+    halo_catalogs: list[Path] = None
+    density_fields: list[Path] = None
     store_grids: list = ('Tk', 'bubbles', 'lyal', 'dTb')
-    dens_field: Union[str, None] = None
     dens_field_type: Literal['21cmFAST', 'pkdgrav'] = 'pkdgrav'
     Nh_part_min: int = 50
     cores: int = 2
+    # TODO rename these
     kmin: float = 3e-2
     kmax: float = 4
     kbin: Union[int, str] = 30
+
     thresh_pixel: Union[int, None] = None
     subgrid_approximation: bool = True
     nGrid_min_heat: int = 4
@@ -153,6 +154,15 @@ class SimulationParameters:
     def halo_mass_bins(self) -> np.ndarray:
         return np.logspace(np.log10(self.halo_mass_bin_min), np.log10(self.halo_mass_bin_max), self.halo_mass_bin_n, base=10)    
 
+    @property
+    def kbins(self) -> np.ndarray:
+        # TODO don't allow the usage of strings here
+        if isinstance(self.kbin, str):
+            return np.loadtxt(self.kbin)
+        elif isinstance(self.kbin, int):
+            return np.logspace(np.log10(self.kmin), np.log10(self.kmax), self.kbin, base=10)
+        else:
+            raise ValueError("kbin must be either a path to a text file or an int.")
 
 
 @dataclass(slots = True)
@@ -275,7 +285,7 @@ class Parameters:
 
 def make_hashable(item):
     if isinstance(item, np.ndarray):
-        return item.tostring()
+        return make_hashable(item.tolist())
     elif isinstance(item, list):
         return str(item)
     elif isinstance(item, dict):
@@ -287,13 +297,13 @@ def make_hashable(item):
 
 
 
-class ParametersEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, Path):
-            return obj.as_posix()
-        elif is_dataclass(obj):
-            return asdict(obj)
+# class ParametersEncoder(json.JSONEncoder):
+#     def default(self, obj):
+#         if isinstance(obj, np.ndarray):
+#             return obj.tolist()
+#         elif isinstance(obj, Path):
+#             return obj.as_posix()
+#         elif is_dataclass(obj):
+#             return asdict(obj)
         
-        return super().default(obj)
+#         return super().default(obj)

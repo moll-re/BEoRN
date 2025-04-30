@@ -11,7 +11,7 @@ from .constants import *
 from .functions import Beta, find_nearest
 from .cosmo import dTb_fct
 from .structs.parameters import Parameters
-from .computing_profiles import RadiationProfiles
+from .computing_profiles import ProfileSolver
 
 def Delta_21cm_PS_fixed_k(k,PS,plot=True):
     kk, zz = PS['k'], PS['z']
@@ -533,17 +533,19 @@ Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775
                    343109759067.9875])
 
 
-def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste, alpha_list):
+def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_liste, alpha_list):
     from .cosmo import T_adiab
 
     fig, axs = plt.subplots(1, 4, figsize=(17, 5))
 
-    co_radial_grid = profile.r_grid_cell
-    r_lyal_phys = profile.r_lyal
-    zz = profile.z_history
+    # since these are hdf5 datasets, we need to copy it to a numpy array first
+    co_radial_grid = profile.r_grid_cell[:]
+    r_lyal_phys = profile.r_lyal[:]
+    zz = profile.z_history[:]
 
     logger.debug(f"{profile.R_bubble.shape=}, {profile.rho_heat.shape=}, {profile.rho_alpha.shape=}")
     Mh_list = []
+    actual_alpha_list = []
 
     # Plot the 
     for i, zi in enumerate(z_liste):
@@ -557,7 +559,9 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
 
             # the mass history is now uniquely defined:
             Mh_i = profile.Mh_history[ind_M, ind_alpha, ind_z]
+            # TODO - why the 0.68 factor? is this h?
             Mh_list.append(Mh_i / 0.68)
+            actual_alpha_list.append(alpha_val)
 
             # some quantities are required to plot sensible profiles
             T_adiab_z = T_adiab(z_val, parameters)
@@ -577,7 +581,7 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
             alpha = 1 - 0.5 * j / len(alpha_list)
 
             # the label is the same for all profiles
-            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_i:.2e}$ $\\alpha = {alpha_val}$"
+            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_i:.2e}$ $\\alpha = {alpha_val:.2}$"
 
 
             ax = axs[0]
@@ -600,7 +604,7 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
     ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simulation (Behroozi +20)')
 
     # plot our analytical data (and add one legend)
-    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {alpha_list[0]:.2}$')
+    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {actual_alpha_list[0]:.2}$')
 
     # style the plot
     ax.set_xlim(15, 5)
