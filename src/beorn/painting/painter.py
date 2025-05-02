@@ -421,11 +421,6 @@ class Painter:
             # print('bubble volume is ', len(indices) * bubble_volume,'pMpc, grid volume is', np.sum(extra_ion)* (LBox /nGrid/ (1 + z)) ** 3 )
             # Grid_xHII_i += extra_ion
 
-        # fill in empty pixels with the min xHII
-        # TODO - only do this once! in a separate function
-        # output_grid[output_grid < self.parameters.source.min_xHII_value] = self.parameters.source.min_xHII_value
-
-
 
     def paint_alpha_profile(
         self,

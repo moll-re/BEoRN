@@ -1,10 +1,12 @@
 from pathlib import Path
 import logging
 import pickle
+from typing import TypeVar
 
-from . import paths
 from ..structs.parameters import Parameters
+from ..structs.base_struct import BaseStruct
 
+BaseStructDerived = TypeVar("BaseStructDerived", bound = BaseStruct)
 
 class Handler:
     logger = logging.getLogger(__name__)
@@ -34,14 +36,9 @@ class Handler:
         return file_path
 
 
-    def load_file(self, parameters: Parameters, object_type: type, **kwargs) -> object:
+    # TODO: type hinting is off I think
+    def load_file(self, parameters: Parameters, cls: BaseStructDerived, **kwargs) -> BaseStructDerived:
         """
-        This will raise a FileNotFoundError if the file does not exist, meaning that this particular parameter-set has not been computed before.
+        Loads the instance of the class from the persistence directory. This is a convenience method that replaces the need to call cls.read() directly.
         """
-        file_name = self.get_file_name(parameters, object_type, **kwargs)
-        file_path = self.file_root / file_name
-        with (file_path).open("rb") as f:
-            obj = pickle.load(f)
-        
-        self.logger.info(f"Loaded {type(obj).__name__} from persistence ({file_path})")
-        return obj
+        return cls.read(directory=self.file_root, parameters=parameters, **kwargs)

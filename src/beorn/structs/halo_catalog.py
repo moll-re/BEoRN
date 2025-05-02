@@ -25,6 +25,7 @@ class HaloCatalog:
         self.M = np.asarray(self.M)
         assert self.X.size == self.Y.size and self.X.size == self.Z.size and self.X.size == self.M.size, "Halo catalog arrays must have the same length."
 
+
     @property
     def alpha(self) -> np.ndarray:
         """
@@ -32,6 +33,7 @@ class HaloCatalog:
         """
         # TODO determine based on the ACTUAL halo mass history
         return np.ones_like(self.M) * 0.79
+
 
     def get_halo_indices(self, parameters: Parameters, alpha_index: int, mass_index:int) -> np.ndarray:
         """
@@ -54,6 +56,33 @@ class HaloCatalog:
             alpha_range, mass_range, len(indices_match), self.M.mean(), self.alpha.mean()
         )
         return indices_match
+
+
+    def to_mesh(self, parameters: Parameters) -> np.ndarray:
+        """
+        Converts the halo catalog to a 3D mesh of halo counts using nearest neighbor interpolation.
+
+        Parameters
+        ----------
+        parameters : Parameters
+            Contains simulation parameters like box size and number of cells.
+
+        Returns
+        -------
+        np.ndarray
+            3D numpy array representing the halo count mesh.
+        """
+        physical_size = parameters.simulation.Lbox
+        grid_size = parameters.simulation.Ncell
+        mesh = np.zeros((grid_size, grid_size, grid_size))
+        # Convert to physical coordinates and map to grid indices
+        x = np.clip(np.round(self.X * grid_size / physical_size).astype(int), 0, grid_size - 1)
+        y = np.clip(np.round(self.Y * grid_size / physical_size).astype(int), 0, grid_size - 1)
+        z = np.clip(np.round(self.Z * grid_size / physical_size).astype(int), 0, grid_size - 1)
+        # Efficiently increment the mesh at the halo positions
+        np.add.at(mesh, (x, y, z), 1)
+        return mesh
+    
 
 
     ### methods that create new halo catalogs
@@ -83,12 +112,13 @@ class HaloCatalog:
                 # 21cmfast quantities need to be rescaled
                 return cls(
                     M = np.array(m) * parameters.cosmology.h,
-                    X = np.array(xyz[:, 0]) * scaling,
-                    Y = np.array(xyz[:, 1]) * scaling,
-                    Z = np.array(xyz[:, 2]) * scaling,
+                    X = np.array(xyz[:, 0]), # * scaling,
+                    Y = np.array(xyz[:, 1]), # * scaling,
+                    Z = np.array(xyz[:, 2]), # * scaling,
                 )
             except KeyError:
                 raise KeyError("Halo catalog not found in the file.")
+
 
     @classmethod
     def load_pkdgrav(cls, path: Path, parameters: Parameters) -> "HaloCatalog":
@@ -96,8 +126,15 @@ class HaloCatalog:
         if catalog.shape == (0,):
             catalog = np.ndarray((0, 4))
 
+        # TODO review the rescaling
+        return cls(
+            M = catalog[:, 0] * parameters.cosmology.h,
+            X = catalog[:, 1],# * parameters.simulation.Lbox,
+            Y = catalog[:, 2],# * parameters.simulation.Lbox,
+            Z = catalog[:, 3],# * parameters.simulation.Lbox,
+        )
 
-            
+
     @classmethod
     def load(cls, path: Path, parameters: Parameters) -> "HaloCatalog":
         """
@@ -115,17 +152,16 @@ class HaloCatalog:
         HaloCatalog
             Halo catalog object.
         """
-
         if parameters.simulation.dens_field_type == "21cmFAST":
             logger.debug(f"Loading halo catalog from 21cmFAST: {path}")
             catalog = cls.load_21cmfast(path, parameters)
-        elif parameters.simulation.dens_field_type == "Pkdgrav":
-            logger.debug(f"Loading halo catalog from Pkdgrav: {path}")
+        elif parameters.simulation.dens_field_type == "pkdgrav":
+            logger.debug(f"Loading halo catalog from pkdgrav: {path}")
             catalog = cls.load_pkdgrav(path, parameters)
         else:
-            raise ValueError(f"Unknown halo catalog type: {parameters.simulation.dens_field_type}. Supported types are: 21cmFAST, Pkdgrav.")
+            raise ValueError(f"Unknown halo catalog type: {parameters.simulation.dens_field_type}. Supported types are: 21cmFAST, pkdgrav.")
 
-        # # filter out haloes that are considerd non-star forming
+        # filter out haloes that are considerd non-star forming
         condition_min = catalog.M > parameters.source.halo_mass_min
         condition_max = catalog.M < parameters.source.halo_mass_max
         indices = np.where(np.logical_and(condition_min, condition_max))
