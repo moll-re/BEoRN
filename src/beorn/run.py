@@ -154,6 +154,9 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
     except: halo_catalog = parameters.simulation.halo_catalogs[float(z_str)] #param.sim.halo_catalogs[z_str]
     H_Masses, H_X, H_Y, H_Z, z = halo_catalog['M'], halo_catalog['X'], halo_catalog['Y'], halo_catalog['Z'], \
                                  halo_catalog['z']
+    
+    qty = H_Masses
+    print(f"H_Masses: {qty.mean()=:.2e} {qty.std()=:.2e} {qty.min()=:.2e} {qty.max()=:.2e}")
 
     ### To later add up the adiabatic Tk fluctuations at the grid level.
     if temp or dTb:
@@ -164,6 +167,9 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
 
     Om, Ob, h0 = parameters.cosmology.Om, parameters.cosmology.Ob, parameters.cosmology.h
     factor = dTb_factor(parameters)
+    qty = factor
+    print(f"factor: {qty.mean()=:.2e} {qty.std()=:.2e} {qty.min()=:.2e} {qty.max()=:.2e}")
+
     coef = rhoc0 * h0 ** 2 * Ob * (1 + z) ** 3 * M_sun / cm_per_Mpc ** 3 / m_H
 
     # find matching redshift between solver output and simulation snapshot.
@@ -269,6 +275,7 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                                 Grid_xHII_i[XX_indice, YY_indice, ZZ_indice] += np.trapz(
                                     x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (
                                         1 + z)) ** 3 * nbr_of_halos
+                                
 
                             else:
                                 renorm = np.trapz(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (
@@ -284,6 +291,9 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
 
                             # fill in empty pixels with the min xHII
                             Grid_xHII_i[Grid_xHII_i < parameters.source.min_xHII_value] = parameters.source.min_xHII_value
+
+                            quantity = Grid_xHII_i
+                            print(f"Grid_xHII_i: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
 
                             del kernel_xHII
                         if lyal:
@@ -304,6 +314,10 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                                                                    kernel_xal)) * renorm * np.sum(
                                     kernel_xal) / 1e-7  # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
                             del kernel_xal
+                            
+                            quantity = Grid_xal
+                            print(f"Grid_xal: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
 
                         if temp:
                             if isinstance(truncate, float):
@@ -321,6 +335,9 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                                     kernel_T) / 1e-7 * renorm
                             del kernel_T
 
+                            quantity = Grid_Temp
+                            print(f"Grid_Temp: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
                         end_time = time.time()
                         print(len(indices), 'halos in mass bin ', i,
                               '. It took ' + print_time(end_time - start_time) + ' to paint the profiles.')
@@ -331,7 +348,7 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
 
                 t_start_spreading = time.time()
                 if np.sum(Grid_xHII_i) < nGrid ** 3 and ion:
-                    Grid_xHII = spreading_excess_fast(parameters, Grid_xHII_i)
+                    Grid_xHII = spreading_excess_fast(parameters, Grid_xHII_i, plot__= True)
                 else:
                     Grid_xHII = np.array([1])
 
