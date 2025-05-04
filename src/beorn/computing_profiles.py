@@ -757,6 +757,28 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
     # TODO what is N prime?
     # for this computation we consider the maximum redshift to be z_star
     dz_prime = 0.01
+
+
+    def sum_factors(z:float, nu_val: np.ndarray, z_prime: np.ndarray, dMdt_star_int: callable):
+        rcom_prime = comoving_distance(z_prime, parameters) * h0  # comoving distance in [cMpc/h]
+        # logger.debug(f"{rcom_prime.shape=}, {z_prime.shape=}")
+        # since we require slightly altered valus of the halo mass at z' (instead of z) we interpolate the values
+        nu_prime = nu_val[:, None] * ((1 + z_prime) / (1 + z))[None, :]
+        logger.debug(f"{np.isnan(eps_lyal(nu_prime, parameters)).any()=}")
+        logger.debug(f"{np.isnan(dMdt_star_int(z_prime)).any()=}")
+        eps_al = eps_lyal(nu_prime, parameters)[:,  None, None, :] * dMdt_star_int(z_prime)[None, ...]  # [photons.yr-1.Hz-1]
+        logger.debug(f"{np.isnan(nu_prime).any()=}, {np.isnan(eps_al).any()=}")
+        # logger.debug(f"{eps_al.shape=}")
+        eps_int = interp1d(rcom_prime, eps_al, axis=-1, fill_value=0.0, bounds_error=False)
+        flux_int = eps_int(r_grid * (1 + z))
+        # we are now using the lookback time interchangebly as travel distance r (comoving)
+        # this should be the second axis (after the nu dependence) 0 1 2 3 -> 0 3 1 2
+        flux_r = np.moveaxis(flux_int, 3, 1)
+        # logger.debug(f"{flux_r.shape=}, {rec['f'].shape=}")
+        # want to find the z' corresponding to comoving distance r_grid * (1 + z).
+        return flux_r * rec['f'][:, None, None, None]
+
+
     for i, z in enumerate(z_bins):
         # TODO - handle the cutoff more efficiently
         if z > z_star:
@@ -772,33 +794,27 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
         # logger.debug(f"{z_prime.shape=}")
 
         dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om  # SFR Msol/h/yr
-        # logger.debug(f"{dMdt_star.shape=}")
+        logger.debug(f"{dMdt_star.shape=}")
+
+        a = np.concatenate((np.array([z_star]), z_bins[:i + 1]))
+        b = np.concatenate((np.zeros_like(dMdt_star[..., :1]), dMdt_star[..., :i+1]), axis=-1)
+
+        logger.debug(f"{a.shape=}, {b.shape=}")
+
         dMdt_star_int = interp1d(
-            # TODO - original code prepends a value of zero at zstar
-            z_bins[:i + 1],
-            dMdt_star[..., :i+1],
+            np.concatenate((np.array([z_star]), z_bins[:i + 1])),
+            np.concatenate((np.zeros_like(dMdt_star[..., :1]), dMdt_star[..., :i+1]), axis=-1),
             axis = -1,
             fill_value = 'extrapolate'
         )
-        
-        def sum_factors(nu_val: np.ndarray):
-            rcom_prime = comoving_distance(z_prime, parameters) * h0  # comoving distance in [cMpc/h]
-            # logger.debug(f"{rcom_prime.shape=}, {z_prime.shape=}")
-            # since we require slightly altered valus of the halo mass at z' (instead of z) we interpolate the values
-            nu_prime = nu_val[:, None] * ((1 + z_prime) / (1 + z))[None, :]
-            eps_al = eps_lyal(nu_prime, parameters)[:,  None, None, :] * dMdt_star_int(z_prime)[None, ...]  # [photons.yr-1.Hz-1]
-            # logger.debug(f"{eps_al.shape=}")
-            eps_int = interp1d(rcom_prime, eps_al, axis=-1, fill_value=0.0, bounds_error=False)
-            flux_int = eps_int(r_grid * (1 + z))
-            # we are now using the lookback time interchangebly as travel distance r (comoving)
-            # this should be the second axis (after the nu dependence) 0 1 2 3 -> 0 3 1 2
-            flux_r = np.moveaxis(flux_int, 3, 1)
-            # logger.debug(f"{flux_r.shape=}, {rec['f'].shape=}")
-            # want to find the z' corresponding to comoving distance r_grid * (1 + z).
-            return flux_r * rec['f'][:, None, None, None]
+        logger.debug(f"{np.isnan(nu_n).any()=}, {np.isnan(z_prime).any()=}")
 
-        flux_of_r = np.sum(sum_factors(nu_n)[2:rectrunc, ...], axis=0)  # shape is (r_grid, Mbin, alpha_bin)
+        factors = sum_factors(z, nu_n, z_prime, dMdt_star_int)
+        flux_of_r = np.sum(factors[2:rectrunc, ...], axis=0)  # shape is (r_grid, Mbin, alpha_bin)
+        # check which one is nan
+        logger.debug(f"{np.isnan(flux_of_r).any()=}, {np.isnan(r_grid).any()=}")
         rho_alpha_ = flux_of_r / (4 * np.pi * r_grid ** 2)[:, None, None]  ## physical flux in [(pMpc/h)-2.yr-1.Hz-1]
+
 
         rho_alpha[..., i] = rho_alpha_ * (h0 / cm_per_Mpc) ** 2 / sec_per_year  # [pcm-2.s-1.Hz-1]
 

@@ -84,7 +84,8 @@ class Painter:
         # TODO - what exactly is coef
         coef = constants.rhoc0 * self.parameters.cosmology.h ** 2 * self.parameters.cosmology.Ob * (1 + zgrid) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
 
-
+        quantity = halo_catalog.M
+        print(f"halo_catalog.M: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         # since we want to paint the halo profiles in grouped mass bins, we need to know which halos are in which mass bin
         # but there are a few short-circuits:
         # 1. if there are no halos at all -> skip the painting
@@ -227,6 +228,14 @@ class Painter:
         buffer_array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xal.buf)
         Grid_xal = buffer_array.copy()
 
+        quantity = Grid_xHII
+        print(f"Grid_xHII: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        quantity = Grid_Temp
+        print(f"Grid_Temp: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        quantity = Grid_xal
+        print(f"Grid_xal: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
+
         buffer_xHII.close()
         buffer_xHII.unlink()
         buffer_Temp.close()
@@ -341,7 +350,6 @@ class Painter:
         if halo_number == 0:
             return
 
-
         R_bubble, rho_alpha_, Temp_profile = radiation_profiles.profiles_of_halo_bin(z_index, alpha_index, mass_index)
 
         # This is the position of halos in base "nGrid". We use this to speed up the code.
@@ -442,6 +450,8 @@ class Painter:
             # truncate below a certain radius
             x_alpha_prof[r_lyal * (1 + z)< truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
 
+        quantity = x_alpha_prof
+        print(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         kernel_xal = stacked_lyal_kernel(
             r_lyal * (1 + z),
             x_alpha_prof,
@@ -482,6 +492,8 @@ class Painter:
             # truncate below a certain radius
             Temp_profile[radial_grid * (1 + z) < truncate] = Temp_profile[radial_grid * (1 + z) < truncate][-1]
 
+        quantity = Temp_profile
+        print(f"Temp_profile: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         kernel_T = stacked_T_kernel(
             radial_grid * (1 + z),
             Temp_profile,

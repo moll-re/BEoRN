@@ -183,6 +183,12 @@ def put_profiles_group(source_pos, nbr_of_halos, profile_kern, nGrid=None):
     # for i, j, k in source_pos:
     #    source_grid[i, j, k] += 1
     source_grid[source_pos[0], source_pos[1], source_pos[2]] = nbr_of_halos
+    
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.imshow(source_grid[:, 64, :])
+    quantity = profile_kern
+    print(f"profile_kern: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
     out = convolve_fft(source_grid, profile_kern, boundary='wrap', normalize_kernel=False, allow_huge=True)
     return out
 
