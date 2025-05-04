@@ -268,7 +268,11 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                         if ion:
                             profile_xHII = interp1d(radial_grid * (1 + z), x_HII_profile, bounds_error=False,
                                                     fill_value=(1, 0))
+
                             kernel_xHII = profile_to_3Dkernel(profile_xHII, nGrid, LBox)
+                            quantity = kernel_xHII
+                            print(f"kernel_xHII: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
                             if not np.any(kernel_xHII > 0):
                                 ### if the bubble volume is smaller than the grid size,we paint central cell with ion fraction value
                                 # kernel_xHII[int(nGrid / 2), int(nGrid / 2), int(nGrid / 2)] = np.trapz(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3
@@ -280,6 +284,9 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                             else:
                                 renorm = np.trapz(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (
                                         LBox / (1 + z)) ** 3 / np.mean(kernel_xHII)
+                                quantity = renorm
+                                print(f"renorm: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
                                 # extra_ion = put_profiles_group(Pos_Halos_Grid[indices], kernel_xHII * 1e-7 / np.sum(kernel_xHII)) * np.sum(kernel_xHII) / 1e-7 * renorm
                                 Grid_xHII_i += put_profiles_group(np.array((XX_indice, YY_indice, ZZ_indice)),
                                                                   nbr_of_halos,
@@ -306,6 +313,14 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                                                              nGrid_min=parameters.simulation.nGrid_min_lyal)
                             renorm = np.trapz(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (
                                     LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
+
+                            quantity = x_alpha_prof
+                            print(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+                            quantity = kernel_xal
+                            print(f"kernel_xal: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+                            quantity = renorm
+                            print(f"renorm: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
                             if np.any(kernel_xal > 0):
                                 # Grid_xal += put_profiles_group(Pos_Halos_Grid[indices], kernel_xal * 1e-7 / np.sum(kernel_xal)) * renorm * np.sum( kernel_xal) / 1e-7  # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
                                 Grid_xal += put_profiles_group(np.array((XX_indice, YY_indice, ZZ_indice)),
@@ -327,6 +342,14 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                                                         nGrid_min=parameters.simulation.nGrid_min_heat)
                             renorm = np.trapz(Temp_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (
                                     LBox / (1 + z)) ** 3 / np.mean(kernel_T)
+                            
+                            quantity = renorm
+                            print(f"renorm: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+                            quantity = kernel_T
+                            print(f"kernel_T: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+                            quantity = Temp_profile
+                            print(f"Temp_profile: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+
                             if np.any(kernel_T > 0):
                                 # Grid_Temp += put_profiles_group(Pos_Halos_Grid[indices],  kernel_T * 1e-7 / np.sum(kernel_T)) * np.sum(kernel_T) / 1e-7 * renorm
                                 Grid_Temp += put_profiles_group(np.array((XX_indice, YY_indice, ZZ_indice)),
