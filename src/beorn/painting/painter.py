@@ -80,18 +80,19 @@ class Painter:
         # this will raise an error if the needed profiles are not available
         # The loading is left in this function to allow for the possibility of parallelizing the painting
         zgrid = grid_model.z_history[z_index]
+        mass_range = grid_model.Mh_history[..., z_index]
 
         # TODO - what exactly is coef
         coef = constants.rhoc0 * self.parameters.cosmology.h ** 2 * self.parameters.cosmology.Ob * (1 + zgrid) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
 
         quantity = halo_catalog.M
-        print(f"halo_catalog.M: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        self.logger.debug(f"halo_catalog.M: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         # since we want to paint the halo profiles in grouped mass bins, we need to know which halos are in which mass bin
         # but there are a few short-circuits:
         # 1. if there are no halos at all -> skip the painting
         # 2. if there are halos but they lie outside the mass range -> raise an error
 
-        if halo_catalog.M.max() > grid_model.Mh_history[..., z_index].max() or halo_catalog.M.min() < grid_model.Mh_history[..., z_index].min():
+        if halo_catalog.M.max() > mass_range.max() or halo_catalog.M.min() < mass_range.min():
             raise RuntimeError(f"The current halo catalog at z={zgrid} has a higher masse range than the mass range of the precomputed profiles. You need to adjust your parameters: either increase the mass range of the profile simulation (parameters.simulation) or decrease the mass range of star forming halos (parameters.source).")
 
         self.logger.info(f'Painting {halo_catalog.M.size} halos at zgrid={zgrid:.2f}.')
@@ -181,14 +182,20 @@ class Painter:
         with ProcessPoolExecutor(max_workers=self.parameters.simulation.cores) as executor:
             # if only one process is used, we won't make use of the executor, but it allows us to keep the code more concise
             futures = []
-            
+
             self.logger.info(f"Using {self.parameters.simulation.cores} processes for painting.")
             
+            # We iterate over all the available mass bins and alpha bins that we have profiles for
+            # Note: the mass bins are not the same as the ones in the parameters, since for each time step the mass bins shift in the radiation profile computation
+            # the alpha bins are constant so we can use the ones from the parameters
             alpha_indices = range(len(self.parameters.source.mass_accretion_alpha_range) - 1)
             mass_indices = range(len(self.parameters.simulation.halo_mass_bins) - 1)
             
             for alpha_index, mass_index in product(alpha_indices, mass_indices):
-                halo_indices = halo_catalog.get_halo_indices(self.parameters, alpha_index, mass_index)
+                # we take +2 because we want to include the n and n+1 mass/alpha values
+                loop_alpha_range = self.parameters.source.mass_accretion_alpha_range[alpha_index:alpha_index + 2]
+                loop_mass_range = mass_range[mass_index:mass_index + 2, alpha_index]
+                halo_indices = halo_catalog.get_halo_indices(loop_alpha_range, loop_mass_range)
 
                 # yet another shortcut: don't copy any memory if there are no halos to begin with
                 if halo_indices.size == 0:
@@ -229,11 +236,11 @@ class Painter:
         Grid_xal = buffer_array.copy()
 
         quantity = Grid_xHII
-        print(f"Grid_xHII: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        self.logger.debug(f"Grid_xHII: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         quantity = Grid_Temp
-        print(f"Grid_Temp: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        self.logger.debug(f"Grid_Temp: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         quantity = Grid_xal
-        print(f"Grid_xal: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        self.logger.debug(f"Grid_xal: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
 
 
         buffer_xHII.close()
@@ -451,7 +458,7 @@ class Painter:
             x_alpha_prof[r_lyal * (1 + z)< truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
 
         quantity = x_alpha_prof
-        print(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        self.logger.debug(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         kernel_xal = stacked_lyal_kernel(
             r_lyal * (1 + z),
             x_alpha_prof,
@@ -493,7 +500,7 @@ class Painter:
             Temp_profile[radial_grid * (1 + z) < truncate] = Temp_profile[radial_grid * (1 + z) < truncate][-1]
 
         quantity = Temp_profile
-        print(f"Temp_profile: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
+        self.logger.debug(f"Temp_profile: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         kernel_T = stacked_T_kernel(
             radial_grid * (1 + z),
             Temp_profile,
