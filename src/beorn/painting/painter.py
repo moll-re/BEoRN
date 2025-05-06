@@ -63,6 +63,10 @@ class Painter:
             grid_data.write(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
             multi_z_data.append(grid_data, directory=self.output_handler.file_root, parameters=self.parameters)
 
+
+        # reinitialize the grid data to create the attributes that are mapped from the hdf5 fields
+        del multi_z_data
+        multi_z_data = GridDataMultiZ.read(directory=self.output_handler.file_root, parameters=self.parameters)
         return multi_z_data
 
 
@@ -181,21 +185,30 @@ class Painter:
 
         with ProcessPoolExecutor(max_workers=self.parameters.simulation.cores) as executor:
             # if only one process is used, we won't make use of the executor, but it allows us to keep the code more concise
-            futures = []
-
             self.logger.info(f"Using {self.parameters.simulation.cores} processes for painting.")
-            
-            # We iterate over all the available mass bins and alpha bins that we have profiles for
-            # Note: the mass bins are not the same as the ones in the parameters, since for each time step the mass bins shift in the radiation profile computation
+
+            futures = []
+            total_halos = 0
+
+            ## iterate over the range of mass and alpha bins that the profiles are available for
             # the alpha bins are constant so we can use the ones from the parameters
+            # the mass bins are more tricky - they follow the mass accretion history i.e. they shift with each redshift step
             alpha_indices = range(len(self.parameters.source.mass_accretion_alpha_range) - 1)
             mass_indices = range(len(self.parameters.simulation.halo_mass_bins) - 1)
+
+            # now each profile was computed for a precise mass/alpha value that we set to be the center points of the bins
+            # => in the actual profile the shape is (l-1)x(m-1)x(n-1) where l,m,n are the number of bins in mass, alpha and redshift
+            # For each profile we have a range of mass and alpha values where we can pick haloes from
+            # We just need to ensure that all haloes are considered in the end (hence the total_halos check)
             
             for alpha_index, mass_index in product(alpha_indices, mass_indices):
-                # we take +2 because we want to include the n and n+1 mass/alpha values
-                loop_alpha_range = self.parameters.source.mass_accretion_alpha_range[alpha_index:alpha_index + 2]
-                loop_mass_range = mass_range[mass_index:mass_index + 2, alpha_index]
+                loop_alpha_range = [self.parameters.source.mass_accretion_alpha_range[alpha_index], self.parameters.source.mass_accretion_alpha_range[alpha_index + 1]]
+                # as mentioned above, the mass range is not constant but depends on the redshift
+                m_range_base = [self.parameters.simulation.halo_mass_bins[mass_index], self.parameters.simulation.halo_mass_bins[mass_index + 1]]
+                loop_mass_range = np.array(m_range_base) * np.exp(self.parameters.source.mass_accretion_alpha_range[alpha_index] * (self.parameters.solver.Nz.min() - zgrid))
+
                 halo_indices = halo_catalog.get_halo_indices(loop_alpha_range, loop_mass_range)
+                total_halos += halo_indices.size
 
                 # yet another shortcut: don't copy any memory if there are no halos to begin with
                 if halo_indices.size == 0:
@@ -226,6 +239,7 @@ class Painter:
             # wait for all futures to complete
             completed, uncompleted = wait(futures)
             assert len(uncompleted) == 0, "Not all painting subprocesses completed successfully"
+            assert total_halos == halo_catalog.M.size, f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.M.size}. This is a bug."
 
         # clean up the shared memory buffers - but keep the data in the buffer
         buffer_array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xHII.buf)
@@ -339,6 +353,7 @@ class Painter:
         buffer_temp: np.ndarray = None,
         buffer_xHII: np.ndarray = None,
     ):
+        self.logger.info("Called")
         zgrid = radiation_profiles.z_history[z_index]
         radial_grid = radiation_profiles.r_grid_cell / (1 + zgrid)  # pMpc/h
         nGrid = self.parameters.simulation.Ncell
@@ -348,14 +363,6 @@ class Painter:
         # truncate = self.parameters.simulation.truncate_radius
         truncate = False
         cic = False
-
-        # indices in H_Masses of halos that have an initial mass at z=z_start between M_Bin[i-1] and M_Bin[i]
-        halo_number = halo_catalog.M.size
-        self.logger.debug(f"Processing {halo_number} halos in mass bin {mass_index} and alpha bin {alpha_index} at z={zgrid}")
-
-        # nothing to process
-        if halo_number == 0:
-            return
 
         R_bubble, rho_alpha_, Temp_profile = radiation_profiles.profiles_of_halo_bin(z_index, alpha_index, mass_index)
 

@@ -57,6 +57,10 @@ class ProfileSolver:
 
 
     def solve(self) -> RadiationProfiles:
+        # don't compute for the edges of the bins, but rather for the midpoints
+        # TODO: log bins are interpolated at the linear midpoints => is this an issue?
+        # We expect the bins to be small enough that this is not a problem
+        # z_arr = (self.parameters.solver.Nz[:-1] + self.parameters.solver.Nz[1:]) / 2
         z_arr = self.parameters.solver.Nz
         halo_mass, halo_mass_derivative = mass_accretion(z_arr, self.parameters)
         if logger.isEnabledFor(logging.DEBUG):
@@ -208,7 +212,7 @@ def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, 
         volume = volume.reshape(photon_number.shape)
         return km_per_Mpc / (hubble(z, parameters) * a) * (photon_number / comoving_baryon_number_density - alpha_HII(1e4) * C / cm_per_Mpc ** 3 * h0 ** 3 * baryon_number * volume).flatten()  # eq 65 from barkana and loeb
 
-    volume_shape = (parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range))
+    volume_shape = (parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1)
     # the time dependence will be given by the redshift 
     v0 = np.zeros(volume_shape)
     sol = solve_ivp(volume_derivative, [aa[0], aa[-1]], v0.flatten(), t_eval=aa)
@@ -274,7 +278,7 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
     # we cast to int later on because this gives the number of points
     N_prime = np.maximum(N_prime, 4).astype(int) # TODO explain why 4 exactly
 
-    rho_xray = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range), len(z_bins)))
+    rho_xray = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1, len(z_bins)))
 
     for i, z in enumerate(z_bins):
         # it only makes sense to compute the profile for z < zstar
@@ -751,7 +755,7 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
     nu_n = nu_LL * (1 - 1 / rec['n'] ** 2)
     nu_n[nu_n == -np.inf] = 0
 
-    rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range), len(z_bins)))
+    rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1, len(z_bins)))
 
     # compute the N prime array before hand
     # TODO what is N prime?

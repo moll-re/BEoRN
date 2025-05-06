@@ -53,11 +53,11 @@ class HaloCatalog:
         )[0]
         # in this case where returns two arrays, we only want the first one
 
-        # logger.debug(
-        #     "alpha_range=%s, mass_range=%s -> %d matches",
-        #     (alpha_inf, alpha_sup), (mass_inf, mass_sup), len(indices_match)
-        # )
-
+        if indices_match.size != 0:
+            logger.debug(
+                "alpha_range=%s, mass_range=%s -> %d matches",
+                (alpha_inf, alpha_sup), (mass_inf, mass_sup), len(indices_match)
+            )
         return indices_match
 
 
@@ -103,7 +103,7 @@ class HaloCatalog:
 
 
     @classmethod
-    def load_21cmfast(cls, path: Path, parameters: Parameters) -> "HaloCatalog":        
+    def load_21cmfast(cls, path: Path, parameters: Parameters) -> "HaloCatalog":       
         with h5py.File(path, 'r') as f:
             try:
                 haloes = f['PerturbHaloField']
