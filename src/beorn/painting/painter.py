@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, wait
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
+import matplotlib.pyplot as plt
 
 global_logger = logging.getLogger(__name__)
 
@@ -364,7 +365,7 @@ class Painter:
         truncate = False
         cic = False
 
-        R_bubble, rho_alpha_, Temp_profile = radiation_profiles.profiles_of_halo_bin(z_index, alpha_index, mass_index)
+        R_bubble, rho_alpha_, Temp_profile = radiation_profiles.profiles_of_halo_bin(z_index, alpha_index, mass_index + 1)
 
         # This is the position of halos in base "nGrid". We use this to speed up the code.
         # We count with np.unique the number of halos in each cell. Then we do not have to loop over halo positions in --> profiles_on_grid/put_profiles_group
@@ -465,6 +466,18 @@ class Painter:
             x_alpha_prof[r_lyal * (1 + z)< truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
 
         quantity = x_alpha_prof
+
+        plt.figure()
+        plt.grid()
+        plt.plot(x_alpha_prof)
+        plt.show()
+
+        plt.figure()
+        plt.grid()
+        plt.plot(x_alpha_prof / (1+x_alpha_prof))
+        plt.show()
+
+
         self.logger.debug(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
         kernel_xal = stacked_lyal_kernel(
             r_lyal * (1 + z),
