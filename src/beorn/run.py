@@ -9,6 +9,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 import scipy
 import tools21cm as t2c
+import matplotlib.pyplot as plt
 
 from .constants import cm_per_Mpc, M_sun, m_H
 from .cosmo import D, hubble, T_adiab_fluctu, dTb_fct, T_cmb
@@ -313,6 +314,14 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                                                              nGrid_min=parameters.simulation.nGrid_min_lyal)
                             renorm = np.trapz(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (
                                     LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
+
+                            plt.figure()
+                            plt.plot(x_alpha_prof)
+                            plt.show()
+
+                            plt.figure()
+                            plt.plot(x_alpha_prof / (1+x_alpha_prof))
+                            plt.show()
 
                             quantity = x_alpha_prof
                             print(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
