@@ -315,13 +315,13 @@ def paint_profile_single_snap(z_str, parameters: Parameters, temp=True, lyal=Tru
                             renorm = np.trapz(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (
                                     LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
 
-                            plt.figure()
-                            plt.plot(x_alpha_prof)
-                            plt.show()
+                            # plt.figure()
+                            # plt.plot(x_alpha_prof)
+                            # plt.show()
 
-                            plt.figure()
-                            plt.plot(x_alpha_prof / (1+x_alpha_prof))
-                            plt.show()
+                            # plt.figure()
+                            # plt.plot(x_alpha_prof / (1+x_alpha_prof))
+                            # plt.show()
 
                             quantity = x_alpha_prof
                             print(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
