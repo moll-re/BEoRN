@@ -552,6 +552,7 @@ def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_li
         for j, alpha_j in enumerate(alpha_list):
             # the user specifies the redshifts and alpha values - here we find the index lying closest to these values in the profile
             ind_z = np.argmin(np.abs(zz - zi))
+            print(ind_z)
             z_val = zz[ind_z]
 
             ind_alpha = np.argmin(np.abs(parameters.source.mass_accretion_alpha_range - alpha_j))
@@ -581,7 +582,7 @@ def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_li
             alpha = 1 - 0.5 * j / len(alpha_list)
 
             # the label is the same for all profiles
-            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_i:.2e}$ $\\alpha = {alpha_val:.2}$"
+            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_list[i]:.2e}$ $\\alpha = {alpha_val:.2}$"
 
 
             ax = axs[0]
