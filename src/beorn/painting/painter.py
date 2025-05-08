@@ -49,7 +49,7 @@ class Painter:
 
         self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots.")
         # TODO - this loop could be parallelized using MPI
-        for ii, z in enumerate(radiation_profiles.z_history):
+        for ii, z in enumerate(self.parameters.solver.Nz):
             # TODO - griddata at indivdual snapshots is not really necessary anymore
             try:
                 GridData.read(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
@@ -59,7 +59,8 @@ class Painter:
                 self.logger.debug("Painted output not found in cache. Processing now")
 
             # there is no cache or the cache does not contain the halo catalog - compute it fresh
-            grid_data = self.paint_single(z_index=ii, grid_model=radiation_profiles)
+            z_index = np.argmin(np.abs(radiation_profiles.z_history - z))
+            grid_data = self.paint_single(z_index=z_index, grid_model=radiation_profiles, loop_index=ii)
 
             grid_data.write(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
             multi_z_data.append(grid_data, directory=self.output_handler.file_root, parameters=self.parameters)
@@ -71,15 +72,15 @@ class Painter:
         return multi_z_data
 
 
-    def paint_single(self, z_index: int, grid_model: RadiationProfiles) -> GridData:
+    def paint_single(self, z_index: int, grid_model: RadiationProfiles, loop_index) -> GridData:
         """Paints the halo properties for a single redshift."""
 
         start_time = time.process_time()
         zero_grid = np.zeros((self.parameters.simulation.Ncell, self.parameters.simulation.Ncell, self.parameters.simulation.Ncell))
 
         # TODO - these should be a parameter method
-        halo_catalog = HaloCatalog.load(self.parameters.simulation.halo_catalogs[z_index], self.parameters)
-        delta_b = load_delta_b(self.parameters, z_index)
+        halo_catalog = HaloCatalog.load(self.parameters.simulation.halo_catalogs[loop_index], self.parameters)
+        delta_b = load_delta_b(self.parameters, loop_index)
 
         # find matching redshift between solver output and simulation snapshot.
         # this will raise an error if the needed profiles are not available

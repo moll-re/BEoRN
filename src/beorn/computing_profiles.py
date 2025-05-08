@@ -60,6 +60,8 @@ class ProfileSolver:
         # TODO: log bins are interpolated at the linear midpoints => is this an issue?
         # We expect the bins to be small enough that this is not a problem
         z_arr = self.parameters.solver.Nz
+        # TODO - remove this
+        z_arr = np.flip(np.arange(6, 40, 0.5))
         halo_mass, halo_mass_derivative = mass_accretion(z_arr, self.parameters)
         # if logger.isEnabledFor(logging.DEBUG):
         #     plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.source.mass_accretion_alpha_range)
