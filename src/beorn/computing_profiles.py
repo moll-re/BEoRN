@@ -60,8 +60,8 @@ class ProfileSolver:
         # TODO: log bins are interpolated at the linear midpoints => is this an issue?
         # We expect the bins to be small enough that this is not a problem
         z_arr = self.parameters.solver.Nz
-        # TODO - remove this
-        z_arr = np.flip(np.arange(6, 40, 0.5))
+        # # TODO - remove this
+        # z_arr = np.flip(np.arange(6, 40, 0.5))
         halo_mass, halo_mass_derivative = mass_accretion(z_arr, self.parameters)
         # if logger.isEnabledFor(logging.DEBUG):
         #     plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.source.mass_accretion_alpha_range)
@@ -672,56 +672,42 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
 
     for i, z in enumerate(z_bins):
         logger.debug(f"{i=}, {z=}")
-        # TODO - handle the cutoff more efficiently
         if z > z_star:
             continue
 
-        flux = []
-        for k in range(2, rectrunc):
-            z_max = (1 - (rec['n'][k] + 1) ** (-2)) / (1 - (rec['n'][k]) ** (-2)) * (1 + z) - 1
-            z_range = np.minimum(z_max, z_star) - z
+        # Precompute z_max and z_prime for all k
+        z_max = (1 - (rec['n'][2:rectrunc] + 1) ** (-2)) / (1 - (rec['n'][2:rectrunc]) ** (-2)) * (1 + z) - 1
+        z_max = np.minimum(z_max, z_star)
+        z_ranges = z_max - z
 
-            N_prime = int(z_range / 0.01)  # dz_prime_lyal
+        N_primes = np.maximum((z_ranges / 0.01).astype(int), 4)  # Ensure at least 4 points
+        z_primes = [np.logspace(np.log(z), np.log(z_max_k), N_prime_k, base=np.e) 
+                    for z_max_k, N_prime_k in zip(z_max, N_primes)]
 
-            if (N_prime < 4):
-                N_prime = 4
+        # Compute rcom_prime for all k
+        rcom_primes = [comoving_distance(z_prime, parameters) * h0 for z_prime in z_primes]
 
-            z_prime = np.logspace(np.log(z), np.log(z_max), N_prime, base=np.e)
-            rcom_prime = comoving_distance(z_prime, parameters) * h0  # comoving distance in [cMpc/h]
+        # Compute dMdt_star interpolator
+        dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om
+        dMdt_star_int = interp1d(
+            np.concatenate((np.array([z_star]), z_bins[:i + 1])),
+            np.concatenate((np.zeros_like(dMdt_star[..., :1]), dMdt_star), axis=-1),
+            axis=-1,
+            fill_value='extrapolate'
+        )
 
-            # What follows is the emissivity of the source at z_prime (such that at z the photon is at rcom_prime)
-            # We then interpolate to find the correct emissivity such that the photon is at r_grid*(1+z) (in comoving unit)
-            dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om  # SFR Msol/h/yr
-            logger.debug(f"{dMdt_star.shape=}")
-
-            # if dMdt_star.shape[-1] == 1:
-            dMdt_star_int = interp1d(
-                np.concatenate((np.array([z_star]), z_bins[:i + 1])),
-                np.concatenate((np.zeros_like(dMdt_star[..., :1]), dMdt_star), axis=-1),
-                axis = -1,
-                fill_value = 'extrapolate'
-            )
-
-            nu_prime = nu_n[k] * (1 + z_prime) / (1 + z)
-            eps_al = eps_lyal(nu_prime, parameters)[None, None, :] * dMdt_star_int(z_prime)  # [photons.yr-1.Hz-1]
-            logger.debug(f"{eps_al.shape=}, {dMdt_star_int(z_prime).shape=}")
-            logger.debug(f"rcom_prime {rcom_prime.shape=}")
+        # Vectorized computation for all k
+        flux = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1))
+        for k, (z_prime, rcom_prime) in enumerate(zip(z_primes, rcom_primes)):
+            nu_prime = nu_n[k + 2] * (1 + z_prime) / (1 + z)
+            eps_al = eps_lyal(nu_prime, parameters)[None, None, :] * dMdt_star_int(z_prime)
             eps_int = interp1d(rcom_prime, eps_al, axis=-1, fill_value=0.0, bounds_error=False)
 
-            # print('zz',zz, 'rgrid',r_grid * (1 + zz))
-            flux_m = eps_int(r_grid * (1 + z)) * rec['f'][ k]  # want to find the z' corresponding to comoving distance r_grid * (1 + z).
-            flux_r = np.moveaxis(flux_m, 2, 0)
-            flux += [np.array(flux_r)]
+            flux_k = eps_int(r_grid * (1 + z)) * rec['f'][k + 2]
+            flux += np.moveaxis(flux_k, 2, 0)
 
-        # print(f"{flux.shape=}")
-
-        flux = np.array(flux)
-        flux_of_r = np.sum(flux, axis=0)  # shape is (r_grid,Mbin)
-        print(f"{flux_of_r.shape=}, {r_grid.shape=}, {rho_alpha.shape=}")
-
-
-        rho_alpha_ = flux_of_r / (4 * np.pi * r_grid ** 2)[:, None, None]  ## physical flux in [(pMpc/h)-2.yr-1.Hz-1]
-
+        # Compute rho_alpha for this redshift
+        rho_alpha_ = flux / (4 * np.pi * r_grid ** 2)[:, None, None]
         rho_alpha[..., i] = rho_alpha_ * (h0 / cm_per_Mpc) ** 2 / sec_per_year  # [pcm-2.s-1.Hz-1]
 
     return rho_alpha

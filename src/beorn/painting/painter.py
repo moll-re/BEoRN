@@ -468,15 +468,15 @@ class Painter:
 
         quantity = x_alpha_prof
 
-        plt.figure()
-        plt.grid()
-        plt.plot(x_alpha_prof)
-        plt.show()
+        # plt.figure()
+        # plt.grid()
+        # plt.plot(x_alpha_prof)
+        # plt.show()
 
-        plt.figure()
-        plt.grid()
-        plt.plot(x_alpha_prof / (1+x_alpha_prof))
-        plt.show()
+        # plt.figure()
+        # plt.grid()
+        # plt.plot(x_alpha_prof / (1+x_alpha_prof))
+        # plt.show()
 
 
         self.logger.debug(f"x_alpha_prof: {quantity.mean()=:.2e} {quantity.std()=:.2e} {quantity.min()=:.2e} {quantity.max()=:.2e}")
