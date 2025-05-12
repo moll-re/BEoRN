@@ -23,7 +23,6 @@ from . import constants
 # TODO: replace these unit conversions by astropy units
 from .constants import sec_per_year, m_H, M_sun, m_p_in_Msun, km_per_Mpc, h_eV_sec, cm_per_Mpc, E_HI, E_HeI, E_HeII, c_km_s, Tcmb0, kb_eV_per_K, nu_LL, rhoc0
 from . import global_qty
-from .functions import def_redshifts
 from .astro import f_Xh, f_star_Halo, f_esc, eps_xray
 
 
@@ -57,10 +56,15 @@ class ProfileSolver:
 
 
     def solve(self) -> RadiationProfiles:
+        # don't compute for the edges of the bins, but rather for the midpoints
+        # TODO: log bins are interpolated at the linear midpoints => is this an issue?
+        # We expect the bins to be small enough that this is not a problem
         z_arr = self.parameters.solver.Nz
+        # # TODO - remove this
+        # z_arr = np.flip(np.arange(6, 40, 0.5))
         halo_mass, halo_mass_derivative = mass_accretion(z_arr, self.parameters)
-        if logger.isEnabledFor(logging.DEBUG):
-            plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.source.mass_accretion_alpha_range)
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.source.mass_accretion_alpha_range)
 
         # both arrays have shape [M_bins, alpha_bins, z_arr]
         if self.parameters.solver.fXh == 'constant':
@@ -87,29 +91,6 @@ class ProfileSolver:
         # TODO assert correct shapes here!
         logger.debug(f"Results have shapes: {rho_xray_.shape=}, {rho_heat_.shape=}, {R_bubble_.shape=}, {r_lyal.shape=}, {rho_alpha.shape=}")
         
-        # self.r_lyal = r_lyal
-        # self.rho_alpha = rho_alpha
-
-        # self.x_e = x_e
-        # TODO x_e might be needed?
-        # self.rho_xray_ = rho_xray_
-        # TODO - what is this?
-        # T_history = {}
-        # rhox_history = {}
-        # for i in range(len(zz)):
-        #     T_history[str(zz[i])] = rho_heat_[i]
-        #     rhox_history[str(zz[i])] =rho_xray_[i]
-
-        # if parameters.simulation.average_profiles_in_bin:
-        #     halo_mass_HR, halo_mass_derivative_HR = mass_accretion(z_arr, parameters)
-        #     self.rho_alpha_HR = rho_alpha_profile(parameters, z_arr, r_lyal, halo_mass_HR, halo_mass_derivative_HR)
-        #     self.rho_xray_HR = rho_xray(parameters, z_arr, self.r_grid, halo_mass_HR, halo_mass_derivative_HR, x_e)
-        #     self.rho_heat_HR = rho_heat(parameters, z_arr, self.r_grid, self.rho_xray_HR)
-        #     self.R_bubble_HR = R_bubble(parameters, z_arr, halo_mass_HR, halo_mass_derivative_HR).clip(min=0)  # cMpc/h
-        #     self.halo_mass_HR = halo_mass_HR
-        #     self.halo_mass_derivative_HR = halo_mass_derivative_HR
-
-
         return RadiationProfiles(
             z_history = z_arr,
             Mh_history = halo_mass,
@@ -123,16 +104,6 @@ class ProfileSolver:
         )
         #self.rhox_history = rhox_history
         # TODO - rename these to be fit snake_case and to be consistent
-        self.Mh_history = halo_mass
-        self.dMh_dt = halo_mass_derivative
-        self.z_history = z_arr
-        self.R_bubble = R_bubble_     # cMpc/h (zz,M)
-        #self.T_history = T_history    # Kelvins
-        self.rho_heat = rho_heat_           #shape (z,r,M)
-        self.r_grid_cell = self.r_grid
-        self.Ngdot_ion = Ngdot_ion(parameters, z_arr, halo_mass,halo_mass_derivative)
-
-
 
 
 def Ngdot_ion(parameters: Parameters, zz, Mh, dMh_dt):
@@ -172,7 +143,6 @@ def Ngdot_ion(parameters: Parameters, zz, Mh, dMh_dt):
         exit()
 
 
-
 def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, halo_mass_derivative: np.ndarray):
     """
     Args:
@@ -208,7 +178,7 @@ def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, 
         volume = volume.reshape(photon_number.shape)
         return km_per_Mpc / (hubble(z, parameters) * a) * (photon_number / comoving_baryon_number_density - alpha_HII(1e4) * C / cm_per_Mpc ** 3 * h0 ** 3 * baryon_number * volume).flatten()  # eq 65 from barkana and loeb
 
-    volume_shape = (parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range))
+    volume_shape = (parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1)
     # the time dependence will be given by the redshift 
     v0 = np.zeros(volume_shape)
     sol = solve_ivp(volume_derivative, [aa[0], aa[-1]], v0.flatten(), t_eval=aa)
@@ -220,7 +190,6 @@ def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, 
     # bubble_volume = np.moveaxis(bubble_volume, 0, -1)
     bubble_radius = (bubble_volume * 3 / (4 * np.pi)) ** (1 / 3)
     return bubble_radius
-
 
 
 def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, xe: np.ndarray):
@@ -274,7 +243,7 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
     # we cast to int later on because this gives the number of points
     N_prime = np.maximum(N_prime, 4).astype(int) # TODO explain why 4 exactly
 
-    rho_xray = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range), len(z_bins)))
+    rho_xray = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1, len(z_bins)))
 
     for i, z in enumerate(z_bins):
         # it only makes sense to compute the profile for z < zstar
@@ -347,9 +316,6 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
     return rho_xray
 
 
-
-
-# TODO : never called => delete
 def Gamma_ion_xray(param,rr, M_accr, dMdt_accr, zz):
     """
     Parameters
@@ -527,55 +493,6 @@ def T_gas_fit(zz):
     Tgas = Tcmb0/a/(1.0+(a/a1)/(1.0+(a2/a)**(3.0/2.0)))
     return Tgas
 
-# TODO: never called
-def rho_x_e(param,rr,G_ion,G_sec_ion,zz):
-    """
-    Compute the profile of  x_e : free electron fraction of (largely) neutral IGM
-    See  arXiv:1406.4120 (eq. 12, 13)
-
-    Parameters
-    ----------
-    zz : redshift array in decreasing order.
-
-    G_ion,G_sec_ion : Energy deposition from first and second ionisation. Output of Gamma_ion_xray.
-    """
-    h0 = param.cosmo.h
-    Ob = param.cosmo.Ob
-    f_He_bynumb = 1 - param.cosmo.HI_frac
-
-    aa = list((1 / (1 + zz)))
-
-    nb0 = rhoc0 * Ob / (m_p_in_Msun * h0)  # [h/Mpc]^3
-
-    # fit from astro-ph/9909275
-    tt = T_gas_fit(zz) / 1e4
-    alB = 1.14e-19 * 4.309 * tt ** (-0.6166) / (1 + 0.6703 * tt ** 0.53) * 1e6  # [cm^3/s]
-    alB = alB * (h0 / cm_per_Mpc) ** 3
-    alB_tck = splrep(aa, alB)
-    alphaB = lambda a: splev(a, alB_tck)
-
-    x_e_profile = np.zeros((len(zz), len(rr), len(G_ion[0, 0, :]))) ## (zz,rr,Mh_bin)
-    for j in range(len(rr)):
-        print(j)
-        # Energy deposition from first ionisation, see astro-ph/060723 (Eq.12) or 1509.07868 (Eq.3)
-        Gamma_HI = interp1d(aa, G_ion[:, j, :], axis=0, fill_value="extrapolate")
-        fXion = lambda xe: (1 - xe) / 2.5  # approx from Fig.4 of 0910.4410
-
-        G_sec_ion_tck = interp1d(aa, G_sec_ion[:, j, :], axis=0, fill_value="extrapolate")
-        gamma_HI = lambda a, xe: G_sec_ion_tck(a) * fXion(xe)
-
-        nH = lambda a: (1 - f_He_bynumb) * nb0 / a ** 3
-
-        # x_e
-        source = lambda a, xe: (Gamma_HI(a) + gamma_HI(a, xe)) * (1 - xe) / (a * hubble(1 / a - 1, param) / km_per_Mpc) - \
-                           alphaB(a) * nH(a) * xe ** 2 / (a * hubble(1 / a - 1, param) / km_per_Mpc)
-
-        result = solve_ivp(source, [aa[0], aa[-1]], np.full(len(G_ion[0,0,:]),0), t_eval=aa)
-        x_e = result.y
-        x_e_profile[:,j,:] = x_e
-
-    return x_e_profile
-
 
 def solve_xe(parameters: Parameters, mean_G_ion, mean_Gsec_ion, zz: np.ndarray):
     """
@@ -679,9 +596,6 @@ def rho_heat(parameters: Parameters, zz, rr, rho_xray):
     return rho_heat_full
 
 
-
-
-
 def cum_optical_depth(zz, E, parameters: Parameters):
     """
     Cumulative optical optical depth of array zz.
@@ -727,6 +641,8 @@ def cum_optical_depth(zz, E, parameters: Parameters):
 
 
 
+
+
 def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.ndarray, halo_mass: np.ndarray, halo_mass_derivative: np.ndarray):
     """
     Ly-al coupling profile
@@ -747,59 +663,51 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
     path_to_file = Path(importlib.util.find_spec('beorn').origin).parent / 'input_data' / 'recfrac.dat'
     rec = np.genfromtxt(path_to_file, usecols=(0, 1), comments='#', dtype=float, names=names)
 
-    # line frequencies
     nu_n = nu_LL * (1 - 1 / rec['n'] ** 2)
-    nu_n[nu_n == -np.inf] = 0
+    nu_n[nu_n == 0] = np.inf
 
-    rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range), len(z_bins)))
+    # rho_alpha = np.zeros((len(z_bins), len(r_grid), len(MM[0, :])))
 
-    # compute the N prime array before hand
-    # TODO what is N prime?
-    # for this computation we consider the maximum redshift to be z_star
-    dz_prime = 0.01
+    rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1, len(z_bins)))
+
     for i, z in enumerate(z_bins):
-        # TODO - handle the cutoff more efficiently
+        logger.debug(f"{i=}, {z=}")
         if z > z_star:
             continue
 
-        z_max = (1 - (rec['n'] + 1) ** (-2)) / (1 - (rec['n']) ** (-2)) * (1 + z) - 1
-        z_max[z_max == np.inf] = 0
-        z_range = np.minimum(z_max, z_star) - z
-        N_prime = z_range / dz_prime
-        # we cast to int later on because this gives the number of points
-        N_prime = np.maximum(N_prime.max(), 4).astype(int) # TODO explain why 4 exactly
-        z_prime = np.logspace(np.log(z), np.log(z_max.max()), N_prime, base=np.e)
-        # logger.debug(f"{z_prime.shape=}")
+        # Precompute z_max and z_prime for all k
+        z_max = (1 - (rec['n'][2:rectrunc] + 1) ** (-2)) / (1 - (rec['n'][2:rectrunc]) ** (-2)) * (1 + z) - 1
+        z_max = np.minimum(z_max, z_star)
+        z_ranges = z_max - z
 
-        dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om  # SFR Msol/h/yr
-        # logger.debug(f"{dMdt_star.shape=}")
+        N_primes = np.maximum((z_ranges / 0.01).astype(int), 4)  # Ensure at least 4 points
+        z_primes = [np.logspace(np.log(z), np.log(z_max_k), N_prime_k, base=np.e) 
+                    for z_max_k, N_prime_k in zip(z_max, N_primes)]
+
+        # Compute rcom_prime for all k
+        rcom_primes = [comoving_distance(z_prime, parameters) * h0 for z_prime in z_primes]
+
+        # Compute dMdt_star interpolator
+        dMdt_star = halo_mass_derivative[..., :i+1] * f_star_Halo(parameters, halo_mass[..., :i+1]) * parameters.cosmology.Ob / parameters.cosmology.Om
         dMdt_star_int = interp1d(
-            # TODO - original code prepends a value of zero at zstar
-            z_bins[:i + 1],
-            dMdt_star[..., :i+1],
-            axis = -1,
-            fill_value = 'extrapolate'
+            np.concatenate((np.array([z_star]), z_bins[:i + 1])),
+            np.concatenate((np.zeros_like(dMdt_star[..., :1]), dMdt_star), axis=-1),
+            axis=-1,
+            fill_value='extrapolate'
         )
-        
-        def sum_factors(nu_val: np.ndarray):
-            rcom_prime = comoving_distance(z_prime, parameters) * h0  # comoving distance in [cMpc/h]
-            # logger.debug(f"{rcom_prime.shape=}, {z_prime.shape=}")
-            # since we require slightly altered valus of the halo mass at z' (instead of z) we interpolate the values
-            nu_prime = nu_val[:, None] * ((1 + z_prime) / (1 + z))[None, :]
-            eps_al = eps_lyal(nu_prime, parameters)[:,  None, None, :] * dMdt_star_int(z_prime)[None, ...]  # [photons.yr-1.Hz-1]
-            # logger.debug(f"{eps_al.shape=}")
+
+        # Vectorized computation for all k
+        flux = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1))
+        for k, (z_prime, rcom_prime) in enumerate(zip(z_primes, rcom_primes)):
+            nu_prime = nu_n[k + 2] * (1 + z_prime) / (1 + z)
+            eps_al = eps_lyal(nu_prime, parameters)[None, None, :] * dMdt_star_int(z_prime)
             eps_int = interp1d(rcom_prime, eps_al, axis=-1, fill_value=0.0, bounds_error=False)
-            flux_int = eps_int(r_grid * (1 + z))
-            # we are now using the lookback time interchangebly as travel distance r (comoving)
-            # this should be the second axis (after the nu dependence) 0 1 2 3 -> 0 3 1 2
-            flux_r = np.moveaxis(flux_int, 3, 1)
-            # logger.debug(f"{flux_r.shape=}, {rec['f'].shape=}")
-            # want to find the z' corresponding to comoving distance r_grid * (1 + z).
-            return flux_r * rec['f'][:, None, None, None]
 
-        flux_of_r = np.sum(sum_factors(nu_n)[2:rectrunc, ...], axis=0)  # shape is (r_grid, Mbin, alpha_bin)
-        rho_alpha_ = flux_of_r / (4 * np.pi * r_grid ** 2)[:, None, None]  ## physical flux in [(pMpc/h)-2.yr-1.Hz-1]
+            flux_k = eps_int(r_grid * (1 + z)) * rec['f'][k + 2]
+            flux += np.moveaxis(flux_k, 2, 0)
 
+        # Compute rho_alpha for this redshift
+        rho_alpha_ = flux / (4 * np.pi * r_grid ** 2)[:, None, None]
         rho_alpha[..., i] = rho_alpha_ * (h0 / cm_per_Mpc) ** 2 / sec_per_year  # [pcm-2.s-1.Hz-1]
 
     return rho_alpha

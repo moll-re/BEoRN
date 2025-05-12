@@ -39,7 +39,7 @@ class BaseStruct(ABC):
             for dataset_name in hdf5_file.keys():
                 setattr(self, dataset_name, hdf5_file[dataset_name])
 
-        logger.debug(f"Read data from {self._file_path}")
+            logger.debug(f"Read data from {self._file_path}")
         
 
 

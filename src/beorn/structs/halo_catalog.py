@@ -35,26 +35,29 @@ class HaloCatalog:
         return np.ones_like(self.M) * 0.79
 
 
-    def get_halo_indices(self, parameters: Parameters, alpha_index: int, mass_index:int) -> np.ndarray:
+    def get_halo_indices(self, alpha_range: list[int], mass_range: list[int]) -> np.ndarray:
         """
         Computes which halos from the current snapshot lie within the mass and alpha range that are specified.
         Returns their indices.
         """
         if self.M.size == 0:
             return []
-        
-        # +2 since we want 2 values        
-        alpha_range = parameters.source.mass_accretion_alpha_range[alpha_index: alpha_index + 2]
-        mass_range = parameters.simulation.halo_mass_bins[mass_index: mass_index + 2]
+
+        alpha_inf, alpha_sup = alpha_range
+        mass_inf, mass_sup = mass_range
+
         # Get the indices of the halos that are within the mass and alpha range
         indices_match = np.where(
-            (self.M >= mass_range[0]) & (self.M < mass_range[1]) &
-            (self.alpha >= alpha_range[0]) & (self.alpha < alpha_range[1])
-        )[0] # in this case where returns two arrays, we only want the first one
-        logger.debug(
-            "alpha_range=%s, mass_range=%s -> %d matches with mean mass=%.2e, mean alpha=%.2e",
-            alpha_range, mass_range, len(indices_match), self.M.mean(), self.alpha.mean()
-        )
+            (self.M >= mass_inf) & (self.M <= mass_sup) &
+            (self.alpha >= alpha_inf) & (self.alpha <= alpha_sup)
+        )[0]
+        # in this case where returns two arrays, we only want the first one
+
+        if indices_match.size != 0:
+            logger.debug(
+                "alpha_range=%s, mass_range=%s -> %d matches",
+                (alpha_inf, alpha_sup), (mass_inf, mass_sup), len(indices_match)
+            )
         return indices_match
 
 
@@ -100,7 +103,7 @@ class HaloCatalog:
 
 
     @classmethod
-    def load_21cmfast(cls, path: Path, parameters: Parameters) -> "HaloCatalog":        
+    def load_21cmfast(cls, path: Path, parameters: Parameters) -> "HaloCatalog":       
         with h5py.File(path, 'r') as f:
             try:
                 haloes = f['PerturbHaloField']

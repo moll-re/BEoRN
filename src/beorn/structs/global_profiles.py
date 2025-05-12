@@ -68,9 +68,11 @@ class GridDataMultiZ(BaseStruct):
         Compute the power spectrum of the given quantity over all redshifts.
         """
         kbins = parameters.simulation.kbin
+        # kbins = parameters.simulation.kbins
         box_dims = parameters.simulation.Lbox
-        power_spectrum = np.zeros((len(self.z), kbins))
+        power_spectrum = np.zeros((len(self.z), parameters.simulation.kbin))
         # self.z becomes available when the data is loaded
         for i, z in enumerate(self.z):
-            power_spectrum[i, ...], bins = t2c.power_spectrum.power_spectrum_1d(quantity[i, ...], box_dims=box_dims, kbins=kbins)
+            delta_quantity = quantity[i, ...] / np.mean(quantity[i, ...]) - 1
+            power_spectrum[i, ...], bins = t2c.power_spectrum.power_spectrum_1d(delta_quantity, box_dims=box_dims, kbins=kbins)
         return power_spectrum, bins
