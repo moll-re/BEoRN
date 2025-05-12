@@ -581,7 +581,7 @@ def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_li
             alpha = 1 - 0.5 * j / len(alpha_list)
 
             # the label is the same for all profiles
-            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_i:.2e}$ $\\alpha = {alpha_val:.2}$"
+            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_list[i]:.2e}$ $\\alpha = {alpha_val:.2}$"
 
 
             ax = axs[0]
