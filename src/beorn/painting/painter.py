@@ -19,7 +19,7 @@ from ..structs.snapshot_profiles import GridData
 from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
 from .. import constants
-from ..profiles_on_grid import average_profile, cumulated_number_halos, profile_to_3Dkernel, put_profiles_group, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
+from ..profiles_on_grid import cumulated_number_halos, profile_to_3Dkernel, put_profiles_group, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
 
 
 class Painter:
@@ -99,7 +99,7 @@ class Painter:
             raise RuntimeError(f"The current halo catalog at z={zgrid} has a higher masse range than the mass range of the precomputed profiles. You need to adjust your parameters: either increase the mass range of the profile simulation (parameters.simulation) or decrease the mass range of star forming halos (parameters.source).")
 
         self.logger.info(f'Painting {halo_catalog.M.size} halos at zgrid={zgrid:.2f}.')
-        
+
         # Shortcut if there are no halos
         if halo_catalog.M.size == 0:
             self.logger.debug("No halos to paint. Returning empty grid.")
@@ -115,7 +115,7 @@ class Painter:
             Grid_dTb_RSD = zero_grid
             Grid_dTb_T_sat = factor * np.sqrt(1 + zgrid) * (1 - Grid_xHII) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
             xcoll_mean = np.mean(Grid_xcoll)
-            
+
             return GridData(
                 z = zgrid,
                 delta_b = delta_b,
@@ -129,39 +129,6 @@ class Painter:
                 # TODO - what value for xtot?
                 Grid_xtot = Grid_xcoll,
             )
-
-
-
-
-        # TODO - i think this speedup is negligible
-        # Ionized_vol = xHII_approx(
-        #     self.parameters,
-        #     grid_model.Mh_history[..., 5, z_index],
-        #     grid_model.R_bubble[..., 5, z_index],
-        #     halo_catalog
-        #     )
-        # if Ionized_vol > 1:
-        #     self.logger.info('Universe is fully ionized. Returning [1] for xHII, T and [0] for dTb.')
-        #     Grid_xHII = zero_grid + 1
-        #     Grid_Temp = zero_grid + 1
-        #     Grid_dTb = zero_grid
-        #     Grid_dTb_no_reio = zero_grid
-        #     Grid_dTb_T_sat = zero_grid
-        #     Grid_xal = zero_grid
-        #     return GridData(
-        #         parameters = self.parameters,
-        #         delta_b = delta_b,
-        #         Grid_Temp = Grid_Temp,
-        #         Grid_dTb = Grid_dTb,
-        #         Grid_dTb_no_reio = Grid_dTb_no_reio,
-        #         Grid_dTb_T_sat = Grid_dTb_T_sat,
-        #         # TODO - what should the value be?
-        #         Grid_dTb_RSD = zero_grid,
-        #         Grid_xHII = Grid_xHII,
-        #         Grid_xal = Grid_xal,
-        #         # TODO - what value for xtot?
-        #         Grid_xtot = zero_grid
-        #     )
 
 
         # initialise the "main" grids here. Since they will be filled in place by multiple parallel processes, we need to use shared memory
@@ -199,7 +166,7 @@ class Painter:
             # We just need to ensure that all haloes are considered in the end (hence the total_halos check)
             
             self.logger.info(f"Using {self.parameters.simulation.cores} processes for painting.")
-            
+
             for alpha_index, mass_index in product(alpha_indices, mass_indices):
                 loop_alpha_range = [self.parameters.source.mass_accretion_alpha_range[alpha_index], self.parameters.source.mass_accretion_alpha_range[alpha_index + 1]]
                 # as mentioned above, the mass range is not constant but depends on the redshift
@@ -212,13 +179,18 @@ class Painter:
                 # yet another shortcut: don't copy any memory if there are no halos to begin with
                 if halo_indices.size == 0:
                     continue
-
+                
+                # since the profiles are are large and copied in the multiprocessing approach, we only pass the relevant slices
+                profiles_of_bin = grid_model.profiles_of_halo_bin(z_index, alpha_index, mass_index)
+                radial_grid = grid_model.r_grid_cell / (1 + zgrid)  # pMpc/h
                 kwargs = {
-                    "radiation_profiles": grid_model,
                     "halo_catalog": halo_catalog.at_indices(halo_indices),
-                    "z_index": z_index,
-                    "alpha_index": alpha_index,
-                    "mass_index": mass_index,
+                    "zgrid": zgrid,
+                    # profiles related quantities
+                    "radial_grid": radial_grid,
+                    "r_lyal": grid_model.r_lyal,
+                    "profiles_of_bin": profiles_of_bin,
+                    # shared memory buffers
                     "buffer_lyal": buffer_xal,
                     "buffer_temp": buffer_Temp,
                     "buffer_xHII": buffer_xHII
@@ -263,7 +235,6 @@ class Painter:
             Grid_xHII = zero_grid + 1
 
         self.logger.info(f'Overlap processing done. Took {time.process_time() - start_time:.2} seconds.')
-
 
 
         ## Post processing on the already filled grids
@@ -334,18 +305,16 @@ class Painter:
 
     def paint_single_mass_bin(
         self,
-        radiation_profiles: RadiationProfiles,
         halo_catalog: HaloCatalog,
-        z_index: int,
-        alpha_index: slice,
-        mass_index: slice,
-
+        # profile related quantities - we don't want to pass the whole radiation_profiles object
+        zgrid: float,
+        radial_grid: np.ndarray,
+        r_lyal: np.ndarray,
+        profiles_of_bin: tuple[np.ndarray, np.ndarray, np.ndarray],
         buffer_lyal: np.ndarray = None,
         buffer_temp: np.ndarray = None,
         buffer_xHII: np.ndarray = None,
     ):
-        zgrid = radiation_profiles.z_history[z_index]
-        radial_grid = radiation_profiles.r_grid_cell / (1 + zgrid)  # pMpc/h
         nGrid = self.parameters.simulation.Ncell
         output_shape = (nGrid, nGrid, nGrid)
         LBox = self.parameters.simulation.Lbox
@@ -354,10 +323,7 @@ class Painter:
         truncate = False
         cic = False
 
-
-
-
-        R_bubble, rho_alpha_, Temp_profile = radiation_profiles.profiles_of_halo_bin(z_index, alpha_index, mass_index)
+        R_bubble, rho_alpha_, Temp_profile = profiles_of_bin
 
         # This is the position of halos in base "nGrid". We use this to speed up the code.
         # We count with np.unique the number of halos in each cell. Then we do not have to loop over halo positions in --> profiles_on_grid/put_profiles_group
@@ -387,7 +353,7 @@ class Painter:
             # TODO - document how r_lyal is the physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
             # modify Grid_xal in place
             self.paint_alpha_profile(
-                output_grid_lyal, radiation_profiles.r_lyal, x_alpha_prof, nGrid, LBox, zgrid, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
+                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, zgrid, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
             )
         if buffer_temp:
             # initialize the output grid over the shared memory buffer

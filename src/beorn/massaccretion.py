@@ -2,90 +2,16 @@
 Mass Accretion Model
 """
 import numpy as np
-from scipy.interpolate import splrep, splev, interp1d
-from scipy.integrate import odeint
 import logging
 logger = logging.getLogger(__name__)
 
-from .constants import sec_per_year, km_per_Mpc
-from .cosmo import D, hubble, Hubble
-from .halomassfunction import HaloMassFunction
+from .cosmo import Hubble
 from .structs.parameters import Parameters
 
 
-def mass_accretion(z_bins, parameters: Parameters):
-    if parameters.source.mass_accretion_model == 'EXP':
-        halo_mass, halo_mass_derivative = mass_accretion_EXP(z_bins, parameters)
-    elif parameters.source.mass_accretion_model == 'EPS':
-        halo_mass, halo_mass_derivative = mass_accretion_EPS(z_bins, parameters)
-    else:
-        raise ValueError(f"Unknown mass accretion model: {parameters.source.mass_accretion_model}")
-    return halo_mass, halo_mass_derivative
-
-
-
-def mass_accretion_EPS(z_bins, parameters: Parameters):
+def mass_accretion(z_bins: np.ndarray, parameters: Parameters) -> tuple[np.ndarray, np.ndarray]:
     """
-    Assuming EPS formula
-    (see Eq. 6 in 1409.5228)
-
-    mm : array. The initial mass bin at z = zstart (self.M_Bin).
-    zz : decreasing array of redshifts.
-
-    Returns :
-    Mh and dMh_dt, two 2D arrays of shape (zz, mm)
-    """
-    # TODO this has not been updated to the new alpha parameter
-    z_bins = np.flip(z_bins) # flip the z array so that it increases : zz = 6...25 etc. This way we solve the evolution of h masses backward in time, since M_Bin is defined as the h masses at the final redshift.
-    m_bins = parameters.simulation.halo_mass_bins
-    aa = 1 / (z_bins + 1)
-    Dgrowth = []
-    for i in range(len(z_bins)):
-        Dgrowth.append(D(aa[i], parameters))  # growth factor
-    Dgrowth = np.array(Dgrowth)
-
-
-    parameters.halo_mass_function.z = [0]  # we just want the linear variance
-    # TODO: don't update parameters on the fly. They were set by the user!
-    parameters.halo_mass_function.m_min = parameters.simulation.halo_mass_bin_min * 1e-5 ## Need small enough value for the source term below (0.6*M)
-    parameters.halo_mass_function.m_max = parameters.simulation.halo_mass_bin_max
-    HMF = HaloMassFunction(parameters)
-    HMF.generate_HMF(parameters)
-    var_tck = splrep(HMF.tab_M, HMF.sigma2)
-
-    # free parameter
-    fM = 0.6
-    fracM = np.full(len(m_bins), fM)
-    frac = interp1d(m_bins, fracM, axis=0, fill_value='extrapolate')
-
-    Dg_tck = splrep(z_bins, Dgrowth)
-    D_growth = lambda z: splev(z, Dg_tck)
-    dDda = lambda z: splev(z, Dg_tck, der=1)
-
-    Maccr = np.zeros((len(z_bins), len(m_bins)))
-    source = lambda M, z: (2 / np.pi) ** 0.5 * M / (splev(frac(M) * M, var_tck, ext=1) - splev(M, var_tck, ext=1)) ** 0.5 * 1.686 / D_growth(z) ** 2 * dDda( z)
-
-    Maccr[:, :] = odeint(source, m_bins, z_bins)
-    Maccr = np.nan_to_num(Maccr, nan=0)
-
-    Raccr = Maccr / m_bins[None, :]
-    dMaccrdz = np.gradient(Maccr, z_bins, axis=0, edge_order=1)
-    dMaccrdt = - dMaccrdz * (1 + z_bins)[:, None] * hubble(z_bins, parameters)[:, None] * sec_per_year / km_per_Mpc
-
-    # remove NaN
-    Raccr[np.isnan(Raccr)] = 0.0
-    dMaccrdz[np.isnan(dMaccrdz)] = 0.0
-    dMaccrdt[np.isnan(dMaccrdt)] = 0.0
-    dMaccrdt = dMaccrdt.clip(min=0)
-
-    return np.flip(Raccr * m_bins,axis=0), np.flip(dMaccrdt,axis=0)
-
-
-
-
-def mass_accretion_EXP(z_bins: np.ndarray, parameters: Parameters) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Computes the halo mass and its derivative with respect to time using the exponential model, using a range of initial halo masses and alpha values.
+    Computes the halo mass and its derivative with respect to time using an exponential mass accretion model. A range of initial halo masses and alpha values is computed.
     Args:
         param : dictionary containing all the input parameters
         z_bins  : arr of redshifts
@@ -104,13 +30,13 @@ def mass_accretion_EXP(z_bins: np.ndarray, parameters: Parameters) -> tuple[np.n
     logger.info(f"Computing mass accretion for a parameter space consisting of: {m_bins.shape=}, {alpha_bins.shape=} and {z_bins.shape=}")
 
     halo_mass = m_bins[:, None, None] * np.exp(alpha_bins[None, :, None] * (z_initial - z_bins[None, None, :]))
-    halo_mass_derivative = mass_accretion_EXP_derivative(parameters, halo_mass, z_bins)
+    halo_mass_derivative = mass_accretion_derivative(parameters, halo_mass, z_bins)
     logger.debug(f"{halo_mass.shape=} and {halo_mass_derivative.shape=}")
 
     return halo_mass, halo_mass_derivative
 
 
-def mass_accretion_EXP_derivative(parameters: Parameters, halo_mass: np.ndarray, z_bins: np.ndarray) -> np.ndarray:
+def mass_accretion_derivative(parameters: Parameters, halo_mass: np.ndarray, z_bins: np.ndarray) -> np.ndarray:
     """
     Parameters
     ----------

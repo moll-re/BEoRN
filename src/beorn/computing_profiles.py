@@ -23,7 +23,6 @@ from . import constants
 # TODO: replace these unit conversions by astropy units
 from .constants import sec_per_year, m_H, M_sun, m_p_in_Msun, km_per_Mpc, h_eV_sec, cm_per_Mpc, E_HI, E_HeI, E_HeII, c_km_s, Tcmb0, kb_eV_per_K, nu_LL, rhoc0
 from . import global_qty
-from .functions import def_redshifts
 from .astro import f_Xh, f_star_Halo, f_esc, eps_xray
 
 
@@ -87,29 +86,6 @@ class ProfileSolver:
         rho_alpha = rho_alpha_profile(self.parameters, z_arr, r_lyal, halo_mass, halo_mass_derivative)
         # TODO assert correct shapes here!
         logger.debug(f"Results have shapes: {rho_xray_.shape=}, {rho_heat_.shape=}, {R_bubble_.shape=}, {r_lyal.shape=}, {rho_alpha.shape=}")
-        
-        # self.r_lyal = r_lyal
-        # self.rho_alpha = rho_alpha
-
-        # self.x_e = x_e
-        # TODO x_e might be needed?
-        # self.rho_xray_ = rho_xray_
-        # TODO - what is this?
-        # T_history = {}
-        # rhox_history = {}
-        # for i in range(len(zz)):
-        #     T_history[str(zz[i])] = rho_heat_[i]
-        #     rhox_history[str(zz[i])] =rho_xray_[i]
-
-        # if parameters.simulation.average_profiles_in_bin:
-        #     halo_mass_HR, halo_mass_derivative_HR = mass_accretion(z_arr, parameters)
-        #     self.rho_alpha_HR = rho_alpha_profile(parameters, z_arr, r_lyal, halo_mass_HR, halo_mass_derivative_HR)
-        #     self.rho_xray_HR = rho_xray(parameters, z_arr, self.r_grid, halo_mass_HR, halo_mass_derivative_HR, x_e)
-        #     self.rho_heat_HR = rho_heat(parameters, z_arr, self.r_grid, self.rho_xray_HR)
-        #     self.R_bubble_HR = R_bubble(parameters, z_arr, halo_mass_HR, halo_mass_derivative_HR).clip(min=0)  # cMpc/h
-        #     self.halo_mass_HR = halo_mass_HR
-        #     self.halo_mass_derivative_HR = halo_mass_derivative_HR
-
 
         return RadiationProfiles(
             z_history = z_arr,
@@ -122,18 +98,6 @@ class ProfileSolver:
             r_lyal = r_lyal,
             r_grid_cell = self.r_grid,
         )
-        #self.rhox_history = rhox_history
-        # TODO - rename these to be fit snake_case and to be consistent
-        self.Mh_history = halo_mass
-        self.dMh_dt = halo_mass_derivative
-        self.z_history = z_arr
-        self.R_bubble = R_bubble_     # cMpc/h (zz,M)
-        #self.T_history = T_history    # Kelvins
-        self.rho_heat = rho_heat_           #shape (z,r,M)
-        self.r_grid_cell = self.r_grid
-        self.Ngdot_ion = Ngdot_ion(parameters, z_arr, halo_mass,halo_mass_derivative)
-
-
 
 
 def Ngdot_ion(parameters: Parameters, zz, Mh, dMh_dt):
@@ -348,97 +312,6 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
 
 
 
-
-# TODO : never called => delete
-def Gamma_ion_xray(param,rr, M_accr, dMdt_accr, zz):
-    """
-    Parameters
-    ----------
-    param : dictionary containing all the input parameters
-    M_accr :  function of zz and hence should increase. 2d array of shape (zz,M_bin)
-    dMdt_accr :  Time derivative of halo mass (MAR). 2d array of shape (zz,M_bin)
-    zz : redshift in decreasing order.
-    rr : comoving distance from source center [cMpc/h]
-
-    Returns
-    ----------
-    Two profiles of the X-ray ionisation rate (primary and secondary). This function is not used. It's here in case we need x_e profile (becomes problematic since heat equation loose additivity...)
-
-    -Gamma_ion : Primary ionisation rate from Xray (arXiv:1406.4120, Eq.9,10) -- similar to Gamma_ion in HM code.
-    Gamma-HI, ionisation rate due to xray. It's a profile in [s**-1], that we use to compute x_e ,
-
-    -Gamma_sec_ion : Secondary ionisation rate from xray. We assume fXion only depends on xe (astro-ph/0608032, Eq.69)
-
-    Shape is (zz,rr,M_bin) (M_accr, dMdt_accr all have same dimension (zz,M_bin))
-    """
-
-    Om = param.cosmo.Om
-    Ob = param.cosmo.Ob
-    h0 = param.cosmo.h
-    zstar = 35
-    Emin = param.source.E_min_xray
-    Emax = param.source.E_max_xray
-    NE = 50
-
-    nb0 = rhoc0 * Ob / (m_p_in_Msun * h0)  # [h/Mpc]^3
-
-    # zprime binning
-    dz_prime = 0.1
-
-    # define frequency bin
-    nu_min = Emin / h_eV_sec
-    nu_max = Emax / h_eV_sec
-    N_mu = NE
-    nu = np.logspace(np.log(nu_min), np.log(nu_max), N_mu, base=np.e)
-
-    f_He_bynumb = 1 - param.cosmo.HI_frac
-    # hydrogen
-    nH0 = (1-f_He_bynumb) * nb0
-    # helium
-    nHe0 = f_He_bynumb * nb0
-
-    Gamma_ion = np.zeros((len(zz), len(rr),len(M_accr[0]))) # primary ion
-    Gamma_sec_ion = np.zeros((len(zz), len(rr),len(M_accr[0]))) # secondary ion
-
-    M_star_dot = (Ob / Om) * f_star_Halo(param, M_accr) * dMdt_accr
-    M_star_dot[np.where(M_accr<param.source.M_min)]=0
-
-
-    for i in range(len(zz)):
-        if (zz[i] < zstar):
-           # rr_comoving = rr * (1 + zz[i])
-            z_max = zstar
-            zrange = z_max - zz[i]
-            N_prime = int(zrange / dz_prime)
-
-            if (N_prime < 4):
-                N_prime = 4
-            z_prime = np.logspace(np.log(zz[i]), np.log(z_max), N_prime, base=np.e)
-            rcom_prime = comoving_distance(z_prime, param) * h0  # comoving distance
-
-            dMdt_int = interp1d(zz[:i+1], M_star_dot[:i+1,:],axis=0, fill_value='extrapolate')
-
-            flux = np.zeros((len(nu), len(rr),len(M_accr[0])))
-
-            for j in range(len(nu)):
-                tau_prime = cum_optical_depth(z_prime, nu[j] * h_eV_sec, param)
-                eps_X = eps_xray(nu[j] * (1 + z_prime) / (1 + zz[i]), param)[:,None] * np.exp(-tau_prime)[:,None] * dMdt_int(z_prime)  # [1/s/Hz]
-                eps_int = interp1d(rcom_prime, eps_X, axis=0, fill_value=0.0, bounds_error=False)
-                flux[j, :,:] = np.array(eps_int(rr)) # [1/s/Hz]
-
-
-            pref_ion = (sigma_HI(h_eV_sec*nu)*nH0+sigma_HeI(h_eV_sec*nu)* nHe0)/ nb0
-            pref_sec_ion = (sigma_HI(h_eV_sec*nu)*nH0*(h_eV_sec*nu-E_HI)/E_HI+sigma_HeI(h_eV_sec*nu)* nHe0*(h_eV_sec*nu-E_HeI)/E_HeI)/ nb0
-            integrated_flux         = trapezoid(flux * pref_ion[:,None,None], nu, axis=0)# [cm**2/s]
-            integrated_flux_sec_ion = trapezoid(flux*pref_sec_ion[:,None,None], nu, axis=0)# [cm**2/s]
-
-
-            Gamma_ion[i, :,:] = integrated_flux / (4 * np.pi * (rr/(1+zz[i])) ** 2)[:,None] / (cm_per_Mpc/h0) ** 2  # [1/s] ionisation rate due to Xray
-            Gamma_sec_ion[i,:,:] = integrated_flux_sec_ion / (4 * np.pi * (rr/(1+zz[i])) ** 2)[:,None] / (cm_per_Mpc/h0) ** 2  # [1/s] secondary ionisation rate
-
-    return Gamma_ion, Gamma_sec_ion
-
-
 def mean_gamma_ion_xray(parameters: Parameters, sfrd, zz):
     """
     Parameters
@@ -526,55 +399,6 @@ def T_gas_fit(zz):
     a2 = 1.0/115.0
     Tgas = Tcmb0/a/(1.0+(a/a1)/(1.0+(a2/a)**(3.0/2.0)))
     return Tgas
-
-# TODO: never called
-def rho_x_e(param,rr,G_ion,G_sec_ion,zz):
-    """
-    Compute the profile of  x_e : free electron fraction of (largely) neutral IGM
-    See  arXiv:1406.4120 (eq. 12, 13)
-
-    Parameters
-    ----------
-    zz : redshift array in decreasing order.
-
-    G_ion,G_sec_ion : Energy deposition from first and second ionisation. Output of Gamma_ion_xray.
-    """
-    h0 = param.cosmo.h
-    Ob = param.cosmo.Ob
-    f_He_bynumb = 1 - param.cosmo.HI_frac
-
-    aa = list((1 / (1 + zz)))
-
-    nb0 = rhoc0 * Ob / (m_p_in_Msun * h0)  # [h/Mpc]^3
-
-    # fit from astro-ph/9909275
-    tt = T_gas_fit(zz) / 1e4
-    alB = 1.14e-19 * 4.309 * tt ** (-0.6166) / (1 + 0.6703 * tt ** 0.53) * 1e6  # [cm^3/s]
-    alB = alB * (h0 / cm_per_Mpc) ** 3
-    alB_tck = splrep(aa, alB)
-    alphaB = lambda a: splev(a, alB_tck)
-
-    x_e_profile = np.zeros((len(zz), len(rr), len(G_ion[0, 0, :]))) ## (zz,rr,Mh_bin)
-    for j in range(len(rr)):
-        print(j)
-        # Energy deposition from first ionisation, see astro-ph/060723 (Eq.12) or 1509.07868 (Eq.3)
-        Gamma_HI = interp1d(aa, G_ion[:, j, :], axis=0, fill_value="extrapolate")
-        fXion = lambda xe: (1 - xe) / 2.5  # approx from Fig.4 of 0910.4410
-
-        G_sec_ion_tck = interp1d(aa, G_sec_ion[:, j, :], axis=0, fill_value="extrapolate")
-        gamma_HI = lambda a, xe: G_sec_ion_tck(a) * fXion(xe)
-
-        nH = lambda a: (1 - f_He_bynumb) * nb0 / a ** 3
-
-        # x_e
-        source = lambda a, xe: (Gamma_HI(a) + gamma_HI(a, xe)) * (1 - xe) / (a * hubble(1 / a - 1, param) / km_per_Mpc) - \
-                           alphaB(a) * nH(a) * xe ** 2 / (a * hubble(1 / a - 1, param) / km_per_Mpc)
-
-        result = solve_ivp(source, [aa[0], aa[-1]], np.full(len(G_ion[0,0,:]),0), t_eval=aa)
-        x_e = result.y
-        x_e_profile[:,j,:] = x_e
-
-    return x_e_profile
 
 
 def solve_xe(parameters: Parameters, mean_G_ion, mean_Gsec_ion, zz: np.ndarray):
@@ -677,8 +501,6 @@ def rho_heat(parameters: Parameters, zz, rr, rho_xray):
     rho_heat_full = rho_heat.reshape((*single_rho_xray_shape, -1))
 
     return rho_heat_full
-
-
 
 
 
