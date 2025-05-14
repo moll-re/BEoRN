@@ -11,108 +11,6 @@ from .constants import rhoc0, Tcmb0
 from .structs.parameters import Parameters
 
 
-def load_f(file):
-    prof = pickle.load(open(file, 'rb'))
-    return prof
-
-
-def save_f(file, obj):
-    pickle.dump(file=open(file, 'wb'), obj=obj)
-
-
-def load_halo(parameters: Parameters, index: int):
-    # TODO - loading the halo could be implemented in the parameter data class
-    """
-    Load a halo catalog. Should be a pickle dictionnary. With 'M', 'X', 'Y', 'Z', and redshift 'z'.
-    The halo catalogs should be in param.sim.halo_catalogs and end up with z_string
-    """
-    file = parameters.simulation.halo_catalogs[index]
-    # TODO - Rework this logic
-    try:
-        catalog = load_f(file)
-    except pickle.UnpicklingError:
-        try:
-            catalog = np.loadtxt(file)
-            if catalog.shape == (0,):
-                catalog = np.ndarray((0, 4))
-        except ValueError:
-            try:
-                with h5py.File(file, 'r') as f:
-                    haloes = f['PerturbHaloField']
-                    # convert to numpy array as an intermediate step
-                    m, xyz = haloes['halo_masses'], haloes['halo_coords']
-
-                    catalog = np.zeros((m.size, 4))
-                    catalog[:, 0] = m
-                    catalog[:, 0] *= parameters.cosmology.h
-                    catalog[:, 1:] = xyz
-                    catalog[:, 1:] *= float(parameters.simulation.Lbox / parameters.simulation.Ncell)
-            except KeyError:
-                catalog = None
-
-    if catalog is None:
-        raise ValueError(f"Could not load halo catalog from {file}. Please check the file format and path.")
-
-    if isinstance(catalog, dict):
-        halo_catalog = catalog
-    else:
-        halo_catalog = {'M': catalog[:, 0], 'X': catalog[:, 1], 'Y': catalog[:, 2], 'Z': catalog[:, 3]}
-
-    # only consider the halos in the mass range (specified in the parameters) 
-    indices = np.intersect1d(
-        np.where(halo_catalog['M'] > parameters.source.halo_mass_min),
-        np.where(halo_catalog['M'] < parameters.source.halo_mass_max)
-    )
-
-    for dim in ['X','Y','Z']:
-        # in case you want to do High rez on a sub box of your Nbody simulation
-        indices = np.intersect1d(indices,np.where(halo_catalog[dim] < parameters.simulation.Lbox))
-
-    # remove halos not forming stars
-    halo_catalog['M'] = halo_catalog['M'][indices]
-    halo_catalog['X'] = halo_catalog['X'][indices]
-    halo_catalog['Y'] = halo_catalog['Y'][indices]
-    halo_catalog['Z'] = halo_catalog['Z'][indices]
-
-    return halo_catalog
-
-
-def format_file_name(parameters: Parameters, dir_name, z, qty):
-    """
-    Parameters
-    ----------
-    param : Bunch
-    z : redshift, float.
-    qty : str. The quantity of interest. Can be dTb, Tk, xal, xHII
-    dir : str. The directory where we store the grids.
-
-    Returns
-    ----------
-    The name of the pickle file containing the 3D maps of quantity qty.
-    """
-    out_name = parameters.simulation.model_name
-    z_str = z_string_format(z)
-    nGrid: str = str(parameters.simulation.Ncell)
-    return dir_name + qty + '_' + nGrid + '_' + out_name + '_z' + z_str
-
-def def_k_bins(parameters: Parameters):
-    """
-    The k-bins used to measure the power spectrum.
-    If param.sim.kbin is given as an int, you need to specify kmin and kmax.
-    If given as a string, it will read in the boundary of the kbins.
-    """
-    if isinstance(parameters.simulation.kbin, int):
-        kbins = np.logspace(np.log10(parameters.simulation.kmin), np.log10(parameters.simulation.kmax), parameters.simulation.kbin, base=10)  # h/Mpc
-    elif isinstance(parameters.simulation.kbin, str):
-        kbins = np.loadtxt(parameters.simulation.kbin)
-    else:
-        print(
-            'param.sim.kbin should be either a path to a text files containing kbins edges values or it should be an int.')
-        exit()
-    return kbins
-
-
-
 
 def load_delta_b(parameters: Parameters, index: int):
     """
@@ -184,131 +82,12 @@ def reshape_grid(grid, N):
 
     return  arr2
 
-def load_grid(parameters: Parameters, z, type=None):
-    """
-    Parameters
-    ----------
-    param : Bunch
-    z : redshift, float.
-    type : str.
-
-    Returns
-    ----------
-    3D map of the desired "type", at redshift z
-    """
-
-    out_name = parameters.simulation.model_name
-    dir_name = './grid_output/'
-    z_str = z_string_format(z)
-    nGrid: str = str(parameters.simulation.Ncell)
-
-    if type == 'dTb':
-        grid = load_f(dir_name + 'dTb_' + nGrid + '_' + out_name + '_z' + z_str)
-    elif type == 'lyal':
-        grid = load_f(dir_name + 'xal_' + nGrid + '_' + out_name + '_z' + z_str)
-    elif type == 'Tk':
-        grid = load_f(dir_name + 'Tk_' + nGrid + '_' + out_name + '_z' + z_str)
-    elif type == 'exc_set':
-        grid = load_f(dir_name + 'xHII_exc_set_' + nGrid + '_' + out_name + '_z' + z_str)
-    elif type == 'sem_num':
-        grid = load_f(dir_name + 'xHII_Sem_Num_' + nGrid + '_' + out_name + '_z' + z_str)
-    elif type == 'bubbles':
-        grid = load_f(dir_name + 'xHII_' + nGrid + '_' + out_name + '_z' + z_str)
-    elif type=='matter':
-        grid = load_delta_b(parameters, z_str)
-    else:
-        print('grid type should be dTb, lyal, Tk, matter, exc_set, sem_num, or bubbles. Abort')
-        exit()
-
-    if grid.shape == (1,):
-        Ncell = parameters.simulation.Ncell
-        grid =  np.full((Ncell, Ncell, Ncell),grid[0])
-
-    return grid
-
-
-def save_grid(parameters: Parameters, z, grid, type=None):
-    """
-    Parameters
-    ----------
-    param : Bunch
-    z : redshift, float.
-    type : str.
-    grid : 3D meshrgrid
-
-    Returns
-    ----------
-    Nothing. Save the grid in pickle file with the relevant name (corresponding to "type")
-    """
-    dir_name = './grid_output/'
-    out_name = parameters.simulation.model_name
-    z_str = z_string_format(z)
-    nGrid: str = str(parameters.simulation.Ncell)
-
-    if type == 'dTb':
-        save_f(file=dir_name + 'dTb_' + nGrid + '_' + out_name + '_z' + z_str, obj=grid)
-    elif type == 'lyal':
-        save_f(file=dir_name + 'xal_' + nGrid + '_' + out_name + '_z' + z_str, obj=grid)
-    elif type == 'Tk':
-        save_f(file=dir_name + 'Tk_' + nGrid + '_' + out_name + '_z' + z_str, obj=grid)
-    elif type == 'exc_set':
-        save_f(file=dir_name + 'xHII_exc_set_' + nGrid + '_' + out_name + '_z' + z_str, obj=grid)
-    elif type == 'sem_num':
-        save_f(file=dir_name + 'xHII_Sem_Num_' + nGrid + '_' + out_name + '_z' + z_str, obj=grid)
-    elif type == 'bubbles':
-        save_f(file=dir_name + 'xHII_' + nGrid + '_' + out_name + '_z' + z_str, obj=grid)
-    else:
-        print('grid type should be dTb, lyal, exc_set, sem_num, or bubbles. Abort')
-        exit()
-
-
 def find_nearest(array, value):
     array = np.asarray(array)
     idx = np.argmin(np.abs(array - value))
     return array[idx], idx
 
 
-def z_string_format(zz):
-    """
-    Parameters
-    ----------
-    zz : Float
-
-    Returns
-    ----------
-    string : The same redshift but written in format 00.00.
-    """
-    txt = "{:.2f}".format(zz)
-    return txt.zfill(5)
-
-
-def def_redshifts(parameters: Parameters):
-    """
-    Parameters
-    ----------
-    param:Bunch
-
-    Returns
-    ----------
-    The input redshifts where profiles will be computed. It should correspond to some input density fields and halo catalogs.
-    """
-    # TODO implement as init of the data class directly
-    if isinstance(parameters.solver.Nz, int):
-        print('param.solver.Nz is given as an integer. We define z values in linspace from ', parameters.solver.z_max, 'to ',
-              parameters.solver.z_min)
-        z_arr = np.linspace(parameters.solver.z_max, parameters.solver.z_min, parameters.solver.Nz)
-    elif isinstance(parameters.solver.Nz, list):
-        print('param.solver.Nz is given as a list.')
-        z_arr = np.array(parameters.solver.Nz)
-    elif isinstance(parameters.solver.Nz, np.ndarray):
-        print('param.solver.Nz is given as a np array.')
-        z_arr = parameters.solver.Nz
-    elif isinstance(parameters.solver.Nz, str):
-        z_arr = np.loadtxt(parameters.solver.Nz)
-        print('param.solver.Nz is given as a string. We read z values from ', parameters.solver.Nz)
-    else:
-        print('param.solver.Nz should be a string, list, np array, or an int.')
-    return z_arr
 
 
 def Beta(zz, PS, qty='Tk'):
@@ -326,16 +105,8 @@ def Beta(zz, PS, qty='Tk'):
         print('qty should be either Tk, lyal, or reio.')
 
 
-# TODO - don't redefine these
-def cross_PS(arr1, arr2, box_dims, kbins):
-    return t2c.power_spectrum.cross_power_spectrum_1d(arr1, arr2, box_dims=box_dims, kbins=kbins)
 
 
-def auto_PS(arr1, box_dims, kbins):
-    return t2c.power_spectrum.power_spectrum_1d(arr1, box_dims=box_dims, kbins=kbins)
-
-
-from datetime import timedelta
 
 
 def delta_fct(grid):
@@ -347,17 +118,6 @@ def delta_fct(grid):
 
 
 
-def print_time(delta_t):
-    """
-    Parameters
-    ----------
-    delta_t : output of time.time()
-
-    Returns
-    ----------
-    A clean time in hh:mm:ss
-    """
-    return "{:0>8}".format(str(timedelta(seconds=round(delta_t))))
 
 
 def load_pkdgrav_density_field(file, LBox):
@@ -385,13 +145,6 @@ def load_pkdgrav_density_field(file, LBox):
     return delta_b
 
 
-def load_21cmfast_density_field(file, LBox):
-    with h5py.File(file, 'r') as f:
-        field = f['PerturbedField']
-        dens = field['density']
-
-        dens_array = dens[:]
-        return dens_array
 
 def pixel_position(X,Y,Z,LBox,nGrid):
     """
@@ -410,8 +163,6 @@ def pixel_position(X,Y,Z,LBox,nGrid):
     return Pos_Halos_Grid
 
 
-def Gaussian(d,mean,S):
-    return 1/np.sqrt(2*np.pi*S)*np.exp(-(d-mean)**2/2/S)
 
 
 def smooth_field(field,Rsmoothing,Lbox, nGrid):
@@ -441,26 +192,6 @@ def smooth_field(field,Rsmoothing,Lbox, nGrid):
     del field
 
     return smoothed_field
-
-
-def print_halo_distribution(M_bin,nbr_halos):
-    """
-    Parameters
-    ----------
-    M_bin : halo mass bin
-    nbr_halos : array of size (M_bin) containing for each value M_bin[i],
-                the number of halos with mass M_bin[i] (closer to).
-
-    Returns
-    ----------
-    Prints the halo distribution.
-    """
-    indices = np.where(nbr_halos>0)
-
-    min_bin, max_bin = np.min(indices), np.max(indices)
-    Mh_min, Mh_max = M_bin[min_bin], M_bin[max_bin]
-
-    print(f'Halos are distributed between mass bin {min_bin} and {max_bin} ({Mh_min:.2e}, {Mh_max:.2e}). Here is the histogram:',nbr_halos[indices])
 
 
 
@@ -528,41 +259,5 @@ def format_grid_for_PS_measurement(Grid_Temp,Grid_xHII,Grid_xal,nGrid) :
     if Grid_xal.size == 1:
         Grid_xal = np.full((nGrid, nGrid, nGrid), 0)
     return Grid_Temp,Grid_xHII,Grid_xal
-
-
-
-def gather_files(parameters: Parameters, path, z_arr, Ncell, remove=True):
-    """
-    Parameters
-    ----------
-    path : str
-    z_arr : list of redshift to loop over
-
-    Returns
-    ----------
-    Nothing. Loops over files named <<path + str(Ncell) + '_' + param.sim.model_name + '_' + z_str + '.pkl'>>,
-    and gather their data into a single dictionnary.
-    """
-
-    from collections import defaultdict
-    dd = defaultdict(list)
-
-    for ii, z in enumerate(z_arr):
-        z_str = z_string_format(z)
-        file  = path + str(Ncell) + '_' + parameters.simulation.model_name + '_' + z_str + '.pkl'
-        if os.path.exists(file):
-            data_z = load_f(file)
-            for key, value in data_z.items():
-                dd[key].append(value)
-            if remove:
-                os.remove(file)
-
-    for key, value in dd.items():  # change lists to numpy arrays
-        dd[key] = np.array(value)
-
-    if 'k' in dd:
-        dd['k'] = data_z['k']
-
-    save_f(file= path + str(Ncell) + '_' + parameters.simulation.model_name + '.pkl', obj=dd)
 
 

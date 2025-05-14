@@ -75,6 +75,7 @@ class HaloCatalog:
         np.ndarray
             3D numpy array representing the halo count mesh.
         """
+        # TODO - allow CIC mapping as well
         physical_size = parameters.simulation.Lbox
         grid_size = parameters.simulation.Ncell
         mesh = np.zeros((grid_size, grid_size, grid_size))

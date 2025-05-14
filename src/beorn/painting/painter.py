@@ -6,9 +6,9 @@ from concurrent.futures import ProcessPoolExecutor, wait
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
+from astropy.convolution import convolve_fft
 
-global_logger = logging.getLogger(__name__)
-
+from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
 from ..cosmo import T_adiab_fluctu, dTb_factor, dTb_fct
 from ..couplings import x_coll, S_alpha
 from ..io.handler import Handler
@@ -19,7 +19,15 @@ from ..structs.snapshot_profiles import GridData
 from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
 from .. import constants
-from ..profiles_on_grid import cumulated_number_halos, profile_to_3Dkernel, put_profiles_group, stacked_lyal_kernel, stacked_T_kernel, spreading_excess_fast
+
+
+
+
+CONVOLVE_FFT_KWARGS = {
+    "boundary": "wrap",
+    "normalize_kernel": False,
+    "allow_huge": True
+}
 
 
 class Painter:
@@ -49,7 +57,6 @@ class Painter:
         self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots.")
         # TODO - this loop could be parallelized using MPI
         for ii, z in enumerate(radiation_profiles.z_history):
-            # TODO - griddata at indivdual snapshots is not really necessary anymore
             try:
                 GridData.read(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
                 self.logger.debug(f"Found painted output in cache for {z=}. Skipping.")
@@ -321,17 +328,11 @@ class Painter:
         # TODO
         # truncate = self.parameters.simulation.truncate_radius
         truncate = False
-        cic = False
 
         R_bubble, rho_alpha_, Temp_profile = profiles_of_bin
 
-        # This is the position of halos in base "nGrid". We use this to speed up the code.
-        # We count with np.unique the number of halos in each cell. Then we do not have to loop over halo positions in --> profiles_on_grid/put_profiles_group
-        # TODO - I Hate this
-        unique_base_nGrid_poz, nbr_of_halos = cumulated_number_halos(self.parameters, halo_catalog.X, halo_catalog.Y, halo_catalog.Z, cic=cic)
-        ZZ_indice = unique_base_nGrid_poz // (nGrid ** 2)
-        YY_indice = (unique_base_nGrid_poz - ZZ_indice * nGrid ** 2) // nGrid
-        XX_indice = (unique_base_nGrid_poz - ZZ_indice * nGrid ** 2 - YY_indice * nGrid)
+        # place the halos on the grid so that they can be used in a convolution
+        halo_grid = halo_catalog.to_mesh(self.parameters)
 
         # Every halo in the mass bin i is assumed to have the mass M_bin[i].
         if buffer_xHII:
@@ -342,7 +343,7 @@ class Painter:
 
             # modify Grid_xHII in place
             self.paint_ionization_profile(
-                output_grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, zgrid, XX_indice, YY_indice, ZZ_indice, nbr_of_halos
+                output_grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, zgrid, halo_grid
             )
         if buffer_lyal:
             # initialize the output grid over the shared memory buffer
@@ -353,14 +354,14 @@ class Painter:
             # TODO - document how r_lyal is the physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
             # modify Grid_xal in place
             self.paint_alpha_profile(
-                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, zgrid, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
+                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, zgrid, truncate, halo_grid
             )
         if buffer_temp:
             # initialize the output grid over the shared memory buffer
             output_grid_temp = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_temp.buf)
             # modify Grid_Temp in place
             self.paint_temperature_profile(
-                output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, zgrid, XX_indice, YY_indice, ZZ_indice, truncate, nbr_of_halos
+                output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, zgrid, truncate, halo_grid
             )
 
 
@@ -372,10 +373,7 @@ class Painter:
         x_HII_profile,
         nGrid, LBox,
         z,
-        XX_indice,
-        YY_indice,
-        ZZ_indice,
-        nbr_of_halos
+        halo_grid: np.ndarray
         ):
         # TODO - describe how this modifies the output_grid in place
         profile_xHII = interp1d(
@@ -388,15 +386,15 @@ class Painter:
         if not np.any(kernel_xHII > 0):
             ### if the bubble volume is smaller than the grid size,we paint central cell with ion fraction value
             # kernel_xHII[int(nGrid / 2), int(nGrid / 2), int(nGrid / 2)] = np.trapz(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3
-            output_grid[XX_indice, YY_indice, ZZ_indice] += trapezoid(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3 * nbr_of_halos
+            output_grid += halo_grid * trapezoid(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3
 
         else:
             renorm = trapezoid(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xHII)
             # extra_ion = put_profiles_group(Pos_Halos_Grid[indices], kernel_xHII * 1e-7 / np.sum(kernel_xHII)) * np.sum(kernel_xHII) / 1e-7 * renorm
-            output_grid += put_profiles_group(
-                np.array((XX_indice, YY_indice, ZZ_indice)),
-                nbr_of_halos,
-                kernel_xHII * 1e-7 / np.sum(kernel_xHII)
+            output_grid += convolve_fft(
+                array = halo_grid,
+                kernel = kernel_xHII * 1e-7 / np.sum(kernel_xHII),
+                **CONVOLVE_FFT_KWARGS
             ) * np.sum(kernel_xHII) / 1e-7 * renorm
             # bubble_volume = trapezoid(4 * np.pi * radial_grid ** 2 * x_HII_profile, radial_grid)
             # print('bubble volume is ', len(indices) * bubble_volume,'pMpc, grid volume is', np.sum(extra_ion)* (LBox /nGrid/ (1 + z)) ** 3 )
@@ -411,11 +409,8 @@ class Painter:
         nGrid,
         LBox,
         z,
-        XX_indice,
-        YY_indice,
-        ZZ_indice,
         truncate,
-        nbr_of_halos
+        halo_grid: np.ndarray
         ):
 
         ### We use this stacked_kernel functions to impose periodic boundary conditions when the lyal or T profiles extend outside the box size. Very important for Lyman-a.
@@ -430,14 +425,14 @@ class Painter:
             nGrid,
             nGrid_min = self.parameters.simulation.nGrid_min_lyal
         )
-        renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
 
         if np.any(kernel_xal > 0):
-            # Grid_xal += put_profiles_group(Pos_Halos_Grid[indices], kernel_xal * 1e-7 / np.sum(kernel_xal)) * renorm * np.sum( kernel_xal) / 1e-7  # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
-            output_grid += put_profiles_group(
-                np.array((XX_indice, YY_indice, ZZ_indice)),
-                nbr_of_halos,
-                kernel_xal * 1e-7 / np.sum(kernel_xal)
+            renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
+            
+            output_grid += convolve_fft(
+                array = halo_grid,
+                kernel = kernel_xal * 1e-7 / np.sum(kernel_xal),
+                **CONVOLVE_FFT_KWARGS
             ) * renorm * np.sum(kernel_xal) / 1e-7
             # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
 
@@ -451,11 +446,8 @@ class Painter:
         nGrid,
         LBox,
         z,
-        XX_indice,
-        YY_indice,
-        ZZ_indice,
         truncate,
-        nbr_of_halos
+        halo_grid: np.ndarray
     ):
 
         # TODO - truncation should not be handled by the PAINT function
@@ -470,11 +462,12 @@ class Painter:
             nGrid,
             nGrid_min = self.parameters.simulation.nGrid_min_heat
         )
-        renorm = trapezoid(Temp_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_T)
 
         if np.any(kernel_T > 0):
-            output_grid += put_profiles_group(
-                np.array((XX_indice, YY_indice, ZZ_indice)),
-                nbr_of_halos,
-                kernel_T * 1e-7 / np.sum(kernel_T)
+            renorm = trapezoid(Temp_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_T)
+
+            output_grid += convolve_fft(
+                array = halo_grid,
+                kernel = kernel_T * 1e-7 / np.sum(kernel_T),
+                **CONVOLVE_FFT_KWARGS
             ) * np.sum(kernel_T) / 1e-7 * renorm
