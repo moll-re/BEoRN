@@ -36,14 +36,14 @@ class Painter:
     """
     logger = logging.getLogger(__name__)
 
-    def __init__(self, parameters: Parameters, cache_handler: Handler = None, output_handler: Handler = None):
+    def __init__(self, parameters: Parameters, output_handler: Handler, cache_handler: Handler = None):
         """
         Initialize the Painter class with the given parameters.
 
         Args:
             parameters (Parameters): The parameters object containing cosmological and simulation parameters.
-            cache_handler (Handler, optional): The handler for loading and saving cache data. Defaults to None.
-            output_handler (Handler, optional): The handler for saving the painted output data. Defaults to None.
+            output_handler (Handler): The handler for saving the painted output data.
+            cache_handler (Handler, optional): The handler for loading and saving cache data that is not needed for the final output.
         """
         self.parameters = parameters
         self.output_handler = output_handler
@@ -53,6 +53,8 @@ class Painter:
     def paint_full(self, radiation_profiles: RadiationProfiles) -> GridDataMultiZ:
         """Starts the painting process for the full redshift range."""
         multi_z_data = GridDataMultiZ()
+        # write the empty file so that we can append to it later
+        self.output_handler.write_file(self.parameters, multi_z_data)
 
         self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots.")
         # TODO - this loop could be parallelized using MPI
@@ -68,12 +70,14 @@ class Painter:
             z_index = np.argmin(np.abs(radiation_profiles.z_history - z))
             grid_data = self.paint_single(z_index=z_index, grid_model=radiation_profiles, loop_index=ii)
 
-            grid_data.write(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
-            multi_z_data.append(grid_data, directory=self.output_handler.file_root, parameters=self.parameters)
+            if self.cache_handler:
+                self.cache_handler.write_file(self.parameters, grid_data, z=z)
+
+            # write the painted output to the file (append mode)
+            multi_z_data.append(grid_data)
 
         # reinitialize the grid data to create the attributes that are mapped from the hdf5 fields
-        del multi_z_data
-        multi_z_data = GridDataMultiZ.read(directory=self.output_handler.file_root, parameters=self.parameters)
+        multi_z_data = self.output_handler.load_file(self.parameters, GridDataMultiZ)
         return multi_z_data
 
 
@@ -164,21 +168,21 @@ class Painter:
             ## iterate over the range of mass and alpha bins that the profiles are available for
             # the alpha bins are constant so we can use the ones from the parameters
             # the mass bins are more tricky - they follow the mass accretion history i.e. they shift with each redshift step
-            alpha_indices = range(len(self.parameters.source.mass_accretion_alpha_range) - 1)
+            alpha_indices = range(len(self.parameters.simulation.halo_mass_accretion_alpha) - 1)
             mass_indices = range(len(self.parameters.simulation.halo_mass_bins) - 1)
 
             # now each profile was computed for a precise mass/alpha value that we set to be the center points of the bins
             # => in the actual profile the shape is (l-1)x(m-1)x(n-1) where l,m,n are the number of bins in mass, alpha and redshift
             # For each profile we have a range of mass and alpha values where we can pick haloes from
             # We just need to ensure that all haloes are considered in the end (hence the total_halos check)
-            
+
             self.logger.info(f"Using {self.parameters.simulation.cores} processes for painting.")
 
             for alpha_index, mass_index in product(alpha_indices, mass_indices):
-                loop_alpha_range = [self.parameters.source.mass_accretion_alpha_range[alpha_index], self.parameters.source.mass_accretion_alpha_range[alpha_index + 1]]
+                loop_alpha_range = [self.parameters.simulation.halo_mass_accretion_alpha[alpha_index], self.parameters.simulation.halo_mass_accretion_alpha[alpha_index + 1]]
                 # as mentioned above, the mass range is not constant but depends on the redshift
                 m_range_base = [self.parameters.simulation.halo_mass_bins[mass_index], self.parameters.simulation.halo_mass_bins[mass_index + 1]]
-                loop_mass_range = np.array(m_range_base) * np.exp(self.parameters.source.mass_accretion_alpha_range[alpha_index] * (self.parameters.solver.Nz.min() - zgrid))
+                loop_mass_range = np.array(m_range_base) * np.exp(self.parameters.simulation.halo_mass_accretion_alpha[alpha_index] * (self.parameters.solver.redshifts.min() - zgrid))
 
                 halo_indices = halo_catalog.get_halo_indices(loop_alpha_range, loop_mass_range)
                 total_halos += halo_indices.size
@@ -186,7 +190,7 @@ class Painter:
                 # yet another shortcut: don't copy any memory if there are no halos to begin with
                 if halo_indices.size == 0:
                     continue
-                
+
                 # since the profiles are are large and copied in the multiprocessing approach, we only pass the relevant slices
                 profiles_of_bin = grid_model.profiles_of_halo_bin(z_index, alpha_index, mass_index)
                 radial_grid = grid_model.r_grid_cell / (1 + zgrid)  # pMpc/h
@@ -202,7 +206,7 @@ class Painter:
                     "buffer_temp": buffer_Temp,
                     "buffer_xHII": buffer_xHII
                 }
-                
+
                 if self.parameters.simulation.cores > 1:
                     # use the multiprocessing approach and submit the task to the executor
                     f = executor.submit(
@@ -252,9 +256,8 @@ class Painter:
         # TODO is this necessary?
         Grid_xHII[Grid_xHII < self.parameters.source.min_xHII_value] = self.parameters.source.min_xHII_value
 
-        # TODO
-        S_al = True
-        if S_al:
+
+        if self.parameters.simulation.compute_s_alpha_fluctuations:
             self.logger.debug('Including Salpha fluctuations in dTb')
             Grid_xal *= S_alpha(zgrid, Grid_Temp, 1 - Grid_xHII) / (4 * np.pi)
             # We divide by 4pi to go to sr**-1 units
@@ -262,9 +265,7 @@ class Painter:
             self.logger.debug('NOT including Salpha fluctuations in dTb')
             Grid_xal *= S_alpha(zgrid, np.mean(Grid_Temp), 1 - np.mean(Grid_xHII)) / (4 * np.pi)
 
-        #TODO
-        xcoll = True
-        if xcoll:
+        if self.parameters.simulation.compute_x_coll_fluctuations:
             self.logger.debug('Including xcoll fluctuations in dTb')
             Grid_xcoll = x_coll(z = zgrid, Tk = Grid_Temp, xHI = (1 - Grid_xHII), rho_b = (delta_b + 1) * coef)
             xcoll_mean = np.mean(Grid_xcoll)
@@ -423,7 +424,7 @@ class Painter:
             x_alpha_prof,
             LBox,
             nGrid,
-            nGrid_min = self.parameters.simulation.nGrid_min_lyal
+            nGrid_min = self.parameters.simulation.minimum_grid_size_lyal
         )
 
         if np.any(kernel_xal > 0):
@@ -460,7 +461,7 @@ class Painter:
             Temp_profile,
             LBox,
             nGrid,
-            nGrid_min = self.parameters.simulation.nGrid_min_heat
+            nGrid_min = self.parameters.simulation.minimum_grid_size_heat
         )
 
         if np.any(kernel_T > 0):

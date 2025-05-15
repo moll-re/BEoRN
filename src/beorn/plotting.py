@@ -554,8 +554,8 @@ def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_li
             ind_z = np.argmin(np.abs(zz - zi))
             z_val = zz[ind_z]
 
-            ind_alpha = np.argmin(np.abs(parameters.source.mass_accretion_alpha_range - alpha_j))
-            alpha_val = parameters.source.mass_accretion_alpha_range[ind_alpha]
+            ind_alpha = np.argmin(np.abs(parameters.simulation.halo_mass_accretion_alpha - alpha_j))
+            alpha_val = parameters.simulation.halo_mass_accretion_alpha[ind_alpha]
 
             # the mass history is now uniquely defined:
             Mh_i = profile.Mh_history[ind_M, ind_alpha, ind_z]

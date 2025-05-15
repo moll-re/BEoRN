@@ -291,10 +291,10 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
     nGrid = len(Grid_input[0])
     Grid = np.copy(Grid_input)
 
-    if parameters.simulation.thresh_pixel is None:
+    if parameters.simulation.spreading_pixel_threshold is None:
         pix_thresh = 80 * (nGrid / 256) ** 3
     else:
-        pix_thresh = parameters.simulation.thresh_pixel
+        pix_thresh = parameters.simulation.spreading_pixel_threshold
 
     Binary_Grid = np.copy(Grid)
     Binary_Grid[np.where(Grid < 0.9999999)] = 0
@@ -416,7 +416,7 @@ def spread_single(parameters: Parameters, Grid, connected_indices, print_time=No
         Delta_max = np.max((Max_X - Min_X + 0, Max_Y - Min_Y + 0, Max_Z - Min_Z + 0))
         Center_X, Center_Y, Center_Z = int((Min_X + Max_X) / 2), int((Min_Y + Max_Y) / 2), int((Min_Z + Max_Z) / 2)
 
-        if parameters.simulation.subgrid_approximation:  # Is this flag is True, then you set the subgrid size
+        if parameters.simulation.spreading_subgrid_approximation:  # Is this flag is True, then you set the subgrid size
             N_subgrid = 2 * (Delta_max + 2 * Delta_pixel)  ## length of subgrid embedding the connected region
             if N_subgrid % 2 == 1:
                 N_subgrid += 1  ###Nsubgrid needs to be even to make things easier

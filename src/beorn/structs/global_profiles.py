@@ -1,6 +1,5 @@
 """Global description of the 3d data computed over multiple redshifts."""
 from dataclasses import dataclass, field, fields
-from pathlib import Path
 import h5py
 import numpy as np
 import logging
@@ -20,24 +19,19 @@ class GridDataMultiZ(BaseStruct):
     As such, once initialized (over a non-empty file)m this class has the SAME attributes as the GridData class, each with one additional axis at index 0.
     """
 
-    def append(self, grid_data: GridData, parameters: Parameters, directory: Path):
+    def append(self, grid_data: GridData):
         """
-        Append a new redshift to the collection of grid data.
+        Append a new GridData (for another redshift snapshot) to the collection of grid data.
         """
         if not isinstance(grid_data, GridData):
             raise TypeError("grid_data must be an instance of GridData")
 
-        self._append_to_hdf5(grid_data, parameters, directory)
+        if self._file_path is None:
+            raise ValueError("File path is not set. Cannot append data.")
 
-
-    def _append_to_hdf5(self, grid_data: GridData, parameters: Parameters, directory: Path):
-        """
-        Append the grid data to the underlying HDF5 file.
-        """
-        path = self.get_file_path(directory = directory, parameters = parameters)
-        with h5py.File(path, 'a') as hdf5_file:
-            for field in fields(grid_data):
-                key = field.name
+        with h5py.File(self._file_path, 'a') as hdf5_file:
+            for f in fields(grid_data):
+                key = f.name
                 value = getattr(grid_data, key)
 
                 if isinstance(value, (float, int, list)):

@@ -24,10 +24,10 @@ def load_delta_b(parameters: Parameters, index: int):
     
     field_path = parameters.simulation.density_fields[index]
 
-    if parameters.simulation.dens_field_type == 'pkdgrav':
+    if parameters.simulation.input_type == 'pkdgrav':
         delta_b = load_pkdgrav_density_field(field_path, LBox)
 
-    elif parameters.simulation.dens_field_type == '21cmFAST':
+    elif parameters.simulation.input_type == '21cmFAST':
         delta_b = load_21cmfast_density_field(field_path, LBox)
 
     else:

@@ -5,72 +5,79 @@ Slots are used to prevent the creation of new attributes. This is useful to avoi
 
 from pathlib import Path
 import importlib
-import numpy as np
-from dataclasses import dataclass, field, is_dataclass, asdict, fields
-import json
-from typing import Literal, Union
-
 import hashlib
+from dataclasses import dataclass, field, is_dataclass, fields
+from typing import Literal, Union
+import numpy as np
+
 
 @dataclass(slots = True)
 class SourceParameters:
     """
     Parameters for the sources of radiation. Sensible defaults are provided.
-    
-    Attributes:
-        mass_accretion_model: mass accretion model. Can be EXP or EPS.
-        # TODO modify this to reflect the new model
-        mass_accretion_alpha: coefficient for exponential mass accretion
-        source_type: str. source type. SED, Ghara, Ross, constant
-        energy_min_sed_xray: minimum energy of normalization of xrays in eV
-        energy_max_sed_xray: minimum energy of normalization of xrays in eV
-        energy_cutoff_min_xray: energy cutoff for the xray band.
-        energy_cutoff_max_xray: energy cutoff for the xray band.
-        alS_xray: PL sed Xray part N ~ nu**-alS [nbr of photons/s/Hz]
-        xray_normalisation: Xray normalization [(erg/s) * (yr/Msun)] (astro-ph/0607234 eq22)
-        n_lyman_alpha_phtons: nbr of lyal photons per baryons in stars
-        lyman_alpha_power_law: power law index for lyal 
-        halo_mass_min: Minimum mass of star forming halo. Mdark in HM
-        halo_mass_max: Maximum mass of star forming halo
-        f_st: 
-        Mp: TODO
-        g1: TODO
-        g2: TODO
-        Mt: TODO
-        g3: TODO
-        g4: TODO
-        Nion: TODO
-        f0_esc: photon escape fraction f_esc = f0_esc * (M/Mp)^pl_esc
-        Mp_esc: TODO
-        pl_esc: TODO
-        min_xHII_value: set all pixels where xHII=0 to this value
     """
 
-    mass_accretion_model: Literal['EXP', 'EPS'] = 'EXP'
-    mass_accretion_alpha_range: np.ndarray = field(default_factory=lambda: np.linspace(0.1, 0.9, 10))
     source_type: Literal['SED', 'Ghara', 'Ross', 'constant'] = 'SED'
+    """source type. SED, Ghara, Ross, constant"""
+
     energy_min_sed_xray: int = 500
+    """minimum energy of normalization of xrays in eV"""
+
     energy_max_sed_xray: int = 2000
+    """maximum energy of normalization of xrays in eV"""
+
     energy_cutoff_min_xray: int = 500
+    """lower energy cutoff for the xray band"""
+
     energy_cutoff_max_xray: int = 2000
+    """upper energy cutoff for the xray band"""
+
     alS_xray: float = 1.00001
+    """PL sed Xray part N ~ nu**-alS [nbr of photons/s/Hz] #TODO"""
+
     xray_normalisation: float = 3.4e40
+    """Xray normalization [(erg/s) * (yr/Msun)] (astro-ph/0607234 eq22)"""
+
     n_lyman_alpha_photons: int = 9690
+    """number of lyal photons per baryons in stars"""
+
     lyman_alpha_power_law: float = 0.0
+    """power law index for lyal. 0.0 for constant, 1.0 for linear, 2.0 for quadratic"""
+
     halo_mass_min: float = 1e8
+    """Minimum mass of star forming halo. Mdark in HM. Objects below this mass are not considered during the painting process"""
+
     halo_mass_max: float = 1e16
+    """Maximum mass of star forming halo. Objects above this mass are not considered during the painting process"""
+
     f_st: float = 0.05
+    """TODO"""
     Mp: float = 2.8e11 * 0.68
+    """TODO"""
     g1: float = 0.49
+    """TODO"""
     g2: float = -0.61
+    """TODO"""
     Mt: float = 1e8
+    """TODO"""
     g3: float = 4
+    """TODO"""
     g4: float = -1
+    """TODO"""
     Nion: int = 5000
+    """TODO"""
+
     f0_esc: float = 0.2
+    """photon escape fraction f_esc = f0_esc * (M/Mp)^pl_esc"""
+
     Mp_esc: float = 1e10
+    """TODO"""
     pl_esc: float = 0.0
+    """TODO"""
+
     min_xHII_value: int = 0
+    """Lower limit for the ionization fraction. All pixels with xHII < min_xHII_value will be set to this value."""
+
 
 
 
@@ -78,91 +85,98 @@ class SourceParameters:
 class SolverParameters:
     """
     Solver parameters for the simulation.
-    
-    Attributes:
-        z_max: Starting redshift
-        z_min: Only for MAR. Redshift where to stop the solver
-        Nz: Array or path to a text file. TODO enforce a type
-        fXh: if fXh is constant here, it will take the value 0.11. Otherwise, we will compute the free e- fraction in neutral medium and take the fit fXh = xe**0.225
     """
+    redshifts: np.ndarray = field(default_factory=lambda: np.arange(25, 6, -0.5))
+    """Array of redshifts for the simulation. This should exactly match the redshifts of the halo catalogs. This should also be monotonically decreasing."""
 
-    z_max: int = 40
-    z_min: int = 6
-    Nz: Union[np.ndarray, int, Path] = 500
     fXh: Literal['constant', 'variable'] = 'constant'
+    """if fXh is constant here, it will take the value 0.11. Otherwise, we will compute the free e- fraction in neutral medium and take the fit fXh = xe**0.225"""
 
 
 @dataclass(slots = True)
 class SimulationParameters:
     """
+    Parameters that are used to run the simulation. These are used in the generation of the halo profiles and when converting the halo profiles to a grid.
+
     Attributes:
-        halo_mass_bin_min: Minimum halo mass bin in solar masses.
-        halo_mass_bin_max: Maximum halo mass bin in solar masses.
-        halo_mass_bin_n: Number of bins to define the initial halo mass at z_ini = solver.z.
-        average_profiles_in_bin: Inside one mass bin, halos are unevenly distributed. The profile corresponding to the mass bin should hence be a weighted average.
-        HR_binning: Finer mass binning used to compute accurate average profile in coarse binning.
-        model_name: Name of the simulation, used to name all the files created.
-        Ncell: Number of pixels of the final grid.
-        Lbox: Box length, in [Mpc/h].
-        halo_catalogs: List of the halo catalogs corresponding to the redshifts of interest. If None, will use the 21cmFAST halo catalogs. Make sure it is consistent with the solver parameters. (same number of redshifts)
-        store_grids: Whether or not to store the grids. If not, will just store the power spectra.
-        dens_field: Path and name of the input density field on a grid. Used in run.py to compute dTb maps.
-        dens_field_type: Can be either 21cmFAST or pkdgrav. It adapts the format and normalization of the density field.
-        Nh_part_min: Halos with less than Nh_part_min are excluded.
-        cores: Number of cores used in parallelization.
         kmin: Minimum k value.
         kmax: Maximum k value.
         kbin: Either a path to a text file containing kbin edges values or an int (number of bins to measure PS).
-        thresh_pixel: When spreading the excess ionization fraction, treat all the connected regions with less than "thresh_pixel" as a single connected region (to speed up). If set to None, a default nonzero value will be used.
-        subgrid_approximation: When spreading the excess ionization fraction and running distance_transform_edt, whether or not to do the subgrid approximation.
-        nGrid_min_heat: Stacked_T_kernel.
-        nGrid_min_lyal: Stacked_lyal_kernel.
-        random_seed: Random seed when using 21cmFAST 2LPT solver.
+
         T_saturated: If True, we will assume Tk >> Tcmb.
         reio: If False, we will assume xHII = 0.
     """
+    halo_mass_accretion_alpha: np.ndarray = field(default_factory=lambda: np.linspace(0.1, 0.9, 10))
+    """Coefficient for exponential mass accretion. Since beorn distinguishes between accretion rates a range should be specified"""
 
     halo_mass_bin_min: float = 1e5
+    """Minimum halo mass bin in solar masses."""
+
     halo_mass_bin_max: float = 1e14
+    """Maximum halo mass bin in solar masses."""
+
     halo_mass_bin_n: int = 12
-    average_profiles_in_bin: bool = True
-    HR_binning: int = 400
-    model_name: str = 'SED'
+    """Number of mass bins."""
+
     Ncell: int = 128
+    """Number of pixels of the final grid. This is the number of pixels in each dimension. The total number of pixels will be Ncell^3."""
+
     Lbox: int = 100
+    """Box length, in [Mpc/h]. This is the length of the box in each dimension. The total volume will be Lbox^3."""
+
     halo_catalogs: list[Path] = None
+    """List of paths to the halo catalogs at each redshift. This should have the same number of elements as the number of redshifts in the solver parameters and be sorted in the same order."""
+
     density_fields: list[Path] = None
+    """List of paths to the density fields. This should have the same number of elements as the number of redshifts in the solver parameters and be sorted in the same order."""
+
+    input_type: Literal['21cmFAST', 'pkdgrav'] = 'pkdgrav'
+    """Can be either 21cmFAST or pkdgrav. Depending on the halo input the format and normalization of the fields is handled differently."""
+
     store_grids: list = ('Tk', 'bubbles', 'lyal', 'dTb')
-    dens_field_type: Literal['21cmFAST', 'pkdgrav'] = 'pkdgrav'
-    Nh_part_min: int = 50
-    cores: int = 2
+    """List of the grids to store. Simulating only the needed grids will speed up the simulation. The available grids are: Tk, bubbles, lyal, dTb."""
+
+    cores: int = 1
+    """Number of cores used in parallelization. The computation for each redshift can be parallelized with a shared memory approach. This is the number of cores used for this. Keeping the number at 1 disables parallelization."""
+
     # TODO rename these
+    # TODO are these even used?
     kmin: float = 3e-2
+    """Minimum value of the k binning used for the power spectrum"""
     kmax: float = 4
-    kbin: Union[int, str] = 30
+    """Maximum value of the k binning used for the power spectrum"""
+    kbin: int = 30
+    """Number of k bins used for the power spectrum."""
 
-    thresh_pixel: Union[int, None] = None
-    subgrid_approximation: bool = True
-    nGrid_min_heat: int = 4
-    nGrid_min_lyal: int = 16
+    spreading_pixel_threshold: Union[int, None] = None
+    """When spreading the excess ionization fraction, treat all the connected regions with less than "thresh_pixel" as a single connected region (to speed up). If set to None, a default nonzero value will be used"""
+
+    spreading_subgrid_approximation: bool = True
+    """When spreading the excess ionization fraction and running distance_transform_edt, whether or not to do the subgrid approximation."""
+
+    minimum_grid_size_heat: int = 4
+    """Minimum grid size used when computing the heat kernel from its associated profile."""
+
+    minimum_grid_size_lyal: int = 16
+    """Minimum grid size used when computing the lyal kernel from its associated profile."""
+
     random_seed: int = 12345
-    T_saturated: bool = False
-    reio: bool = True
+    """Random seed for the random number generator. This is used to generate the random numbers for the halo catalogs and the density fields when using 21cmfast."""
 
+    compute_s_alpha_fluctuations: bool = True
+    """Whether or not to include the fluctuations in the suppression factor S_alpha when computing the x_al fraction."""
 
+    compute_x_coll_fluctuations: bool = True
+    """Whether or not to include the fluctuations in the collisional coupling coefficient x_coll when computing the x_tot fraction."""
+
+    # derived properties that are directly related to the parameters
     @property
     def halo_mass_bins(self) -> np.ndarray:
         return np.logspace(np.log10(self.halo_mass_bin_min), np.log10(self.halo_mass_bin_max), self.halo_mass_bin_n, base=10)    
 
     @property
     def kbins(self) -> np.ndarray:
-        # TODO don't allow the usage of strings here
-        if isinstance(self.kbin, str):
-            return np.loadtxt(self.kbin)
-        elif isinstance(self.kbin, int):
-            return np.logspace(np.log10(self.kmin), np.log10(self.kmax), self.kbin, base=10)
-        else:
-            raise ValueError("kbin must be either a path to a text file or an int.")
+        return np.logspace(np.log10(self.kmin), np.log10(self.kmax), self.kbin, base=10)
 
 
 @dataclass(slots = True)
@@ -271,17 +285,19 @@ class Parameters:
         """
         hash_list = []
         # loops over all (even nested) members and replaces them by hashable types
-        for field in fields(self):
-            key = field.name
+        for f in fields(self):
+            key = f.name
             value = getattr(self, key)
             if is_dataclass(value):
-                for f in fields(value):
-                    kk = f.name
+                for ff in fields(value):
+                    kk = ff.name
                     v = getattr(value, kk)
                     hash_list.append(make_hashable(v))
             else:
                 hash_list.append(make_hashable(value))
         return hashlib.md5(str(hash_list).encode()).hexdigest()
+
+
 
 def make_hashable(item):
     if isinstance(item, np.ndarray):
@@ -294,16 +310,3 @@ def make_hashable(item):
         return item.as_posix()
     else:
         return item
-
-
-
-# class ParametersEncoder(json.JSONEncoder):
-#     def default(self, obj):
-#         if isinstance(obj, np.ndarray):
-#             return obj.tolist()
-#         elif isinstance(obj, Path):
-#             return obj.as_posix()
-#         elif is_dataclass(obj):
-#             return asdict(obj)
-        
-#         return super().default(obj)

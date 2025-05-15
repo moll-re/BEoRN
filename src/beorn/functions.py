@@ -28,15 +28,15 @@ def load_delta_b(parameters: Parameters, index: int):
     nGrid = parameters.simulation.Ncell
     field_paths = parameters.simulation.density_fields
 
-    if parameters.simulation.dens_field_type == 'pkdgrav':
+    if parameters.simulation.input_type == 'pkdgrav':
         if field_paths is None:
             raise ValueError('No density fields provided.')
         delta_b = load_pkdgrav_density_field(field_paths[index], LBox)
 
-    elif parameters.simulation.dens_field_type == '21cmFAST':
+    elif parameters.simulation.input_type == '21cmFAST':
         delta_b = load_21cmfast_density_field(field_paths[index], LBox)
 
-    elif parameters.simulation.dens_field_type == 'array':
+    elif parameters.simulation.input_type == 'array':
         delta_b = np.loadtxt(field_paths[index])
     else:
         print('param.sim.dens_field_type should be either 21cmFAST or pkdgrav.')

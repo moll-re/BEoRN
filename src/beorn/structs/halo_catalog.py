@@ -156,14 +156,14 @@ class HaloCatalog:
         HaloCatalog
             Halo catalog object.
         """
-        if parameters.simulation.dens_field_type == "21cmFAST":
+        if parameters.simulation.input_type == "21cmFAST":
             logger.debug(f"Loading halo catalog from 21cmFAST: {path}")
             catalog = cls.load_21cmfast(path, parameters)
-        elif parameters.simulation.dens_field_type == "pkdgrav":
+        elif parameters.simulation.input_type == "pkdgrav":
             logger.debug(f"Loading halo catalog from pkdgrav: {path}")
             catalog = cls.load_pkdgrav(path, parameters)
         else:
-            raise ValueError(f"Unknown halo catalog type: {parameters.simulation.dens_field_type}. Supported types are: 21cmFAST, pkdgrav.")
+            raise ValueError(f"Unknown halo catalog type: {parameters.simulation.input_type}. Supported types are: 21cmFAST, pkdgrav.")
 
         # filter out haloes that are considerd non-star forming
         condition_min = catalog.M > parameters.source.halo_mass_min

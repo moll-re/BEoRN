@@ -58,7 +58,7 @@ def generate_haloes_and_density(
     )
 
     with p21c.global_params.use(**global_params):
-        for redshift in parameters.solver.Nz:
+        for redshift in parameters.solver.redshifts:
 
             # reuse the handler caching logic
             file_root = handler.file_root / f"21cmfast_{parameters.unique_hash()}"

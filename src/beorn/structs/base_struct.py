@@ -47,11 +47,17 @@ class BaseStruct(ABC):
         """
         Write the content of this dataclass into an HDF5 file. Can be called without any arguments to write to the default file path, or with a specific file path, or with additional keyword arguments to customize the file name.
         """
-        if file_path and (directory or parameters or kwargs):
-            raise ValueError("Either provide a file path or a directory and parameters, but not both.")
-        if file_path is None:
-            file_path = self.get_file_path(directory, parameters, **kwargs)
-            file_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._file_path:
+            file_path = self._file_path
+            logger.debug(f"Using existing file path: {self._file_path=}, ignoring arguments.")
+        else:
+            if file_path and (directory or parameters or kwargs):
+                raise ValueError("Either provide a file path or a directory and parameters, but not both.")
+            if file_path is None:
+                file_path = self.get_file_path(directory, parameters, **kwargs)
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            self._file_path = file_path
 
         with h5py.File(file_path, 'w') as h5file:
             for field in fields(self):

@@ -40,10 +40,10 @@ class ProfileSolver:
     """
 
     def __init__(self, parameters: Parameters, handler: Handler):
-        self.z_initial = parameters.solver.z_max  # starting redshift
-        if self.z_initial < 35:
-            # TODO: add this warning as a validator of the parameters dataclass
-            logger.warning('z_start (parameters.solver.zmax) should be larger than 35.')
+        # self.z_initial = parameters.solver.z_max  # starting redshift
+        # if self.z_initial < 35:
+        #     # TODO: add this warning as a validator of the parameters dataclass
+        #     logger.warning('z_start (parameters.solver.zmax) should be larger than 35.')
 
         # TODO remove hardcoded values
         rmin = 1e-2
@@ -52,16 +52,15 @@ class ProfileSolver:
         self.r_grid = np.logspace(np.log10(rmin), np.log10(rmax), Nr) ##cMpc/h
         self.parameters = parameters
         self.handler = handler
-        # self.z_arr = np.flip(np.sort(np.unique(np.concatenate((def_redshifts(parameters),np.arange(6,40,0.5))))))  ## we add up some redshifts to be converged
 
 
     def solve(self) -> RadiationProfiles:
-        z_arr = self.parameters.solver.Nz
+        z_arr = self.parameters.solver.redshifts
         halo_mass, halo_mass_derivative = mass_accretion(z_arr, self.parameters)
         # both arrays have shape [m_bins_center, alpha_bins_center, z_arr]
 
         if logger.isEnabledFor(logging.DEBUG):
-            plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.source.mass_accretion_alpha_range)
+            plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, z_arr, self.parameters.simulation.halo_mass_accretion_alpha)
 
         if self.parameters.solver.fXh == 'constant':
             logger.info('param.solver.fXh is set to constant. We will assume f_X,h = 2e-4**0.225')
@@ -173,7 +172,7 @@ def R_bubble(parameters: Parameters, z_bins: np.ndarray, halo_mass: np.ndarray, 
         volume = volume.reshape(photon_number.shape)
         return km_per_Mpc / (hubble(z, parameters) * a) * (photon_number / comoving_baryon_number_density - alpha_HII(1e4) * C / cm_per_Mpc ** 3 * h0 ** 3 * baryon_number * volume).flatten()  # eq 65 from barkana and loeb
 
-    volume_shape = (parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1)    # the time dependence will be given by the redshift 
+    volume_shape = (parameters.simulation.halo_mass_bin_n - 1, len(parameters.simulation.halo_mass_accretion_alpha) - 1)    # the time dependence will be given by the redshift 
     v0 = np.zeros(volume_shape)
     sol = solve_ivp(volume_derivative, [aa[0], aa[-1]], v0.flatten(), t_eval=aa)
     bubble_volume = sol.y
@@ -238,7 +237,7 @@ def rho_xray(parameters: Parameters, z_bins: np.ndarray, rr, M_accr, dMdt_accr, 
     # we cast to int later on because this gives the number of points
     N_prime = np.maximum(N_prime, 4).astype(int) # TODO explain why 4 exactly
 
-    rho_xray = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1, len(z_bins)))
+    rho_xray = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n - 1, len(parameters.simulation.halo_mass_accretion_alpha) - 1, len(z_bins)))
 
     for i, z in enumerate(z_bins):
         # it only makes sense to compute the profile for z < zstar
@@ -494,7 +493,7 @@ def rho_heat(parameters: Parameters, zz, rr, rho_xray):
 
     # currently rho_heat has the shape (rr * M_bin * alpha_bin, zz) because all dimensions are flattened (except redshift)
     # we need to reshape it to (rr, M_bin, alpha_bin, zz)
-    # rho_heat_full = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n, len(parameters.source.mass_accretion_alpha_range), len(zz) - 1))
+    # rho_heat_full = np.zeros((len(rr), parameters.simulation.halo_mass_bin_n, len(parameters.simulation.halo_mass_accretion_alpha), len(zz) - 1))
     # for i in range(rho_heat.shape[-1]):
     #     rho_heat_full[..., i] = rho_heat[..., i].reshape(single_rho_xray_shape)
     # which is equivalent to the faster:
@@ -574,7 +573,7 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
 
     # rho_alpha = np.zeros((len(z_bins), len(r_grid), len(MM[0, :])))
 
-    rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1, len(z_bins)))
+    rho_alpha = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.simulation.halo_mass_accretion_alpha) - 1, len(z_bins)))
 
     for i, z in enumerate(z_bins):
         if z > z_star:
@@ -601,7 +600,7 @@ def rho_alpha_profile(parameters: Parameters, z_bins: np.ndarray, r_grid: np.nda
         )
 
         # Vectorized computation for all k
-        flux = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.source.mass_accretion_alpha_range) - 1))
+        flux = np.zeros((len(r_grid), parameters.simulation.halo_mass_bin_n - 1, len(parameters.simulation.halo_mass_accretion_alpha) - 1))
         for k, (z_prime, rcom_prime) in enumerate(zip(z_primes, rcom_primes)):
             nu_prime = nu_n[k + 2] * (1 + z_prime) / (1 + z)
             eps_al = eps_lyal(nu_prime, parameters)[None, None, :] * dMdt_star_int(z_prime)
