@@ -6,25 +6,28 @@ from dataclasses import dataclass
 
 @dataclass(slots = True)
 class RadiationProfiles(BaseStruct):
-    # redshift range for which the profiles have been computed
-    # TODO - same as parameters.?.Nz
     z_history: np.ndarray
-    # evolution of halo mass with dependence on final mass, redshift and accretion rate alpha
-    Mh_history: np.ndarray
-    dMh_dt: np.ndarray
+    """redshift range for which the profiles have been computed. Corresponds to the parameters.solver.redshifts parameter"""
+    
+    halo_mass_bins: np.ndarray
+    """bin edges of the halo masses that the profiles have been computed for. The radiation profile at index i corresponds to the halo mass range [halo_mass_bins[i], halo_mass_bins[i+1]]"""
+
     # the core profiles:
-    # - radiation volume/radius
-    # - heating
-    # - lyman alpha photon spreading
     rho_xray: np.ndarray
-    # heating depends on xray profile
+    """X-ray profile"""
     rho_heat: np.ndarray
+    """heating profile, derived from the X-ray profile"""
     rho_alpha: np.ndarray
+    """rho alpha profile"""
     R_bubble: np.ndarray
+    """radius of the ionized bubble around the star forming halo"""
     r_lyal: np.ndarray
+    """radius of the Lyman alpha halo"""
     
     # radial component of the profiles
     r_grid_cell: np.ndarray
+    """radial grid of the profiles"""
+
 
     def profiles_of_halo_bin(self, z_index: int, alpha_index: slice, mass_index:slice) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """

@@ -1,15 +1,15 @@
 """Helpers for the painting module."""
 import numpy as np
 from scipy.ndimage import distance_transform_edt
-from skimage.measure import label
 from scipy.interpolate import interp1d
+from skimage.measure import label
 import logging
 logger = logging.getLogger(__name__)
 
 from ..structs.parameters import Parameters
 
 
-def profile_to_3Dkernel(profile: np.ndarray, nGrid: np.ndarray, LB: int) -> np.ndarray:
+def profile_to_3Dkernel(profile: callable, nGrid: np.ndarray, LB: int) -> np.ndarray:
     """
     Put profile_1D on a grid
 
@@ -22,7 +22,8 @@ def profile_to_3Dkernel(profile: np.ndarray, nGrid: np.ndarray, LB: int) -> np.n
     -------
     meshgrid of size (nGrid,nGrid,nGrid), with the profile at the center.
     """
-    x = np.linspace(-LB / 2, LB / 2, nGrid)  # y, z will be the same.
+    x = np.linspace(-LB / 2, LB / 2, nGrid)
+    # y, z will be the same.
     rx, ry, rz = np.meshgrid(x, x, x, sparse=True)
     rgrid = np.sqrt(rx ** 2 + ry ** 2 + rz ** 2)
     kern = profile(rgrid)
@@ -30,110 +31,96 @@ def profile_to_3Dkernel(profile: np.ndarray, nGrid: np.ndarray, LB: int) -> np.n
 
 
 
-
-
-def spreading_excess_fast(parameters: Parameters, Grid_input, show_plot=False):
+def spreading_excess_fast(parameters: Parameters, input_grid: np.ndarray, show_plot=False):
     """
-    Last and fastest version of the function.
-    Input : Grid_Storage, the cosmological mesh grid (X,X,X) with the ionized fractions, with overlap (pixels where x_ion>1). (X can be 256, 512 ..)
+    This function spreads the excess ionizing photons in the grid. It uses a distance transform to find the closest ionized region and spread the excess photons to it, enlarging the space of the ionized region.
+
+    Parameters
+    ----------
+        parameters : Parameters
+        input_grid : The meshgrid containing the ionizing fractions
+        show_plot : If True, will show the plot of the grid before and after spreading.
+
+    Returns
+    -------
+        Grid : The meshgrid with the excess ionizing photons spread out.
+
     A word regarding the elements of this function :
-        - Binary_Grid : contains 1 where Grid_input>=1 and 0 elsewhere. This grid is used as input for scipy.measure.label. Format is (X,X,X).
-        - Connected_regions : (X,X,X). Output of skimage.measure.label. Each pixel of it is labeled according to the ionized clump it belongs to.
-        - x_ion_tot_i : total sum of ionizing fraction.
-        - region_nbr, size_of_region : region label, and size of it . We use it to idenfity the very small regions (small_regions) with less than "pix_thresh" pixels. We treat them all together to speed up the process
-        - Spread_Single :  spread the excess photons.
+        - Binary_Grid: contains 1 where Grid_input>=1 and 0 elsewhere. This grid is used as input for scipy.measure.label. Format is (X,X,X).
+        - Connected_regions: (X,X,X). Output of skimage.measure.label. Each pixel of it is labeled according to the ionized clump it belongs to.
+        - x_ion_tot_i: total sum of ionizing fraction.
+        - region_nbr, size_of_region: region label, and size of it . We use it to idenfity the very small regions (small_regions) with less than "pix_thresh" pixels. We treat them all together to speed up the process
+        - Spread_Single:  spread the excess photons.
     """
 
-    nGrid = len(Grid_input[0])
-    Grid = np.copy(Grid_input)
+    output_grid = np.copy(input_grid)
 
     if parameters.simulation.spreading_pixel_threshold is None:
         # TODO - what are these values???
+        nGrid = input_grid.shape[0] 
         pix_thresh = 80 * (nGrid / 256) ** 3
     else:
         pix_thresh = parameters.simulation.spreading_pixel_threshold
 
-    Binary_Grid = np.copy(Grid)
-    Binary_Grid[np.where(Grid < 0.9999999)] = 0
-    Binary_Grid[np.where(Grid >= 0.9999999)] = 1
+    binary_grid = np.zeros_like(output_grid)
+
+    binary_grid[np.where(output_grid >= 0.9999999)] = 1
 
     # The first region (i=0) is the still neutral IGM, in between the bubbles
-    label_image = label(Binary_Grid)
+    label_image = label(binary_grid)
 
     # Periodic boundary conditions for label_image
     # assign  same label to ionised regions that are connected through left/right, up/down, front/back box boundaries
-    '''''''''
-    t0_PBC = time.time()
-    PBC_indices = np.where(label_image[0, :, :] * label_image[-1, :, :] > 0)  # neighbor ionised indices
-    label_to_change, indice = np.unique(label_image[-1, PBC_indices[0], PBC_indices[1]], return_index=True)  # labels in the upper layer that should be changed to neighbor labels in the lower layer
-    replacement_label = label_image[0, PBC_indices[0], PBC_indices[1]][indice]
-    for il in range(len(label_to_change)):
-        label_image[label_image == label_to_change[il]] = replacement_label[il]
 
-    PBC_indices = np.where(label_image[:, 0, :] * label_image[:, -1, :] > 0)
-    label_to_change, indice = np.unique(label_image[PBC_indices[0], -1, PBC_indices[1]], return_index=True)
-    replacement_label = label_image[PBC_indices[0], 0, PBC_indices[1]][indice]
-    for il in range(len(label_to_change)):
-        label_image[label_image == label_to_change[il]] = replacement_label[il]
+    total_ionizing_fraction_initial = np.sum(output_grid)
+    logger.debug(f'Current ionization fraction: {total_ionizing_fraction_initial:.3f}')
 
-    PBC_indices = np.where(label_image[:, :, 0] * label_image[:, :, -1] > 0)
-    label_to_change, indice = np.unique(label_image[PBC_indices[0], PBC_indices[1], -1], return_index=True)
-    replacement_label = label_image[PBC_indices[0], PBC_indices[1], 0][indice]
-    for il in range(len(label_to_change)):
-        label_image[label_image == label_to_change[il]] = replacement_label[il]
-    print('Imposing PBC on label_image took', print_time(time.time()-t0_PBC))
-    '''''''''
-
-    x_ion_tot_i = np.sum(Grid)
-    logger.info(f'Current ionization fraction: {np.sum(Grid):.3f}')
-
-    if x_ion_tot_i > Grid.size:
+    if total_ionizing_fraction_initial > output_grid.size:
         logger.info('Universe is fully ionized.')
         # return a final grid with all pixels set to 1
-        return np.ones_like(Grid_input)
+        return np.ones_like(input_grid)
 
-    logger.debug(f'Universe not fully ionized : xHII is {x_ion_tot_i / Grid.size:.4e}.')
+    logger.debug(f'Universe not fully ionized : xHII is {total_ionizing_fraction_initial / output_grid.size:.4e}.')
 
     region_nbr, size_of_region = np.unique(label_image, return_counts=True)
     logger.debug(f"Found {len(region_nbr)} connected regions.")
     label_max = np.max(label_image)
 
     small_regions = np.where(np.isin(label_image, region_nbr[np.where(size_of_region < pix_thresh)[0]]))
-    # small_regions : Gridmesh indices gathering all the connected regions that have less than 10 pixels
-    Small_regions_labels = region_nbr[np.where(size_of_region < pix_thresh)[0]]
+    # Gridmesh indices gathering all the connected regions that have less than 10 pixels
+    small_regions_labels = region_nbr[np.where(size_of_region < pix_thresh)[0]]
     # labels of the small regions. Use this to exclude them from the for loop
 
-    initial_excess = np.sum(Grid[small_regions] - 1)
+    initial_excess = np.sum(output_grid[small_regions] - 1)
     excess_ion = initial_excess
 
-    logger.debug(f'there are {len(Small_regions_labels)} small connected regions with less than {pix_thresh} pixels. They contain a fraction {excess_ion / x_ion_tot_i:.4e} of the total ionisation fraction.')
+    logger.debug(f'there are {len(small_regions_labels)} small connected regions with less than {pix_thresh} pixels. They contain a fraction {excess_ion / total_ionizing_fraction_initial:.4e} of the total ionisation fraction.')
 
     # Do the spreading for the small regions
-    Grid = spread_single(parameters, Grid, small_regions)
-    if np.any(Grid[small_regions] > 1):
-        raise RuntimeError('small regions not correctly spread')
+    output_grid = spread_single(parameters, output_grid, small_regions)
+    assert not np.any(output_grid[small_regions] > 1), 'Small regions not correctly spread.'
 
     all_regions_labels = np.array(range(1, label_max + 1))  # the remaining larges overlapping ionized regions
-    large_regions_labels = all_regions_labels[np.where(np.isin(all_regions_labels, Small_regions_labels) == False)[0]]
+    large_regions_labels = all_regions_labels[np.where(np.isin(all_regions_labels, small_regions_labels) == False)[0]]
     # indices of regions that have more than pix_thresh pixels
 
     # Then do the spreading individually for large regions
+    logger.debug(f"Spreading the {len(large_regions_labels)} large regions.")
     for i, ir in enumerate(large_regions_labels):
         if show_plot and i % 100 == 0:
             # TODO - actually show the plot
             logger.debug(f'Applying spread_single on region {i}/{len(large_regions_labels)}')
         connected_indices = np.where(label_image == ir)
-        Grid = spread_single(parameters, Grid, connected_indices)
+        output_grid = spread_single(parameters, output_grid, connected_indices)
 
-    if np.any(Grid > 1):
-        raise RuntimeError('Some grid pixels are still in excess.')
+    assert not np.any(output_grid > 1), 'Some grid pixels are still in excess.'
 
-    X_Ion_Tot_f = np.sum(Grid)
-    logger.debug(f'Final xion sum: {X_Ion_Tot_f:.3f}')
-    if int(X_Ion_Tot_f) != int(x_ion_tot_i):
+    total_ionization_fraction_final = np.sum(output_grid)
+    logger.debug(f'Final xion sum: {total_ionization_fraction_final:.3f}')
+    if int(total_ionization_fraction_final) != int(total_ionizing_fraction_initial):
         raise RuntimeError('Spreading procedure did not conserve the photons. This should not happen.')
 
-    return Grid
+    return output_grid
 
 
 
@@ -297,8 +284,6 @@ def spread_single(parameters: Parameters, Grid, connected_indices):
 
 
 
-
-
 def stacked_lyal_kernel(rr_al, lyal_array, LBox, nGrid, nGrid_min):
     """
     This function paints the lyal profile on a meshgrid whose size is the size where the lyal profile reaches zeros.
@@ -394,5 +379,3 @@ def stacked_T_kernel(rr_T, T_array, LBox, nGrid, nGrid_min):
     kernel_T_HM = profile_to_3Dkernel(profile_T_HM, nGrid, LBox) + stacked_T_ker[incr_rez, incr_rez, incr_rez]
 
     return kernel_T_HM
-
-

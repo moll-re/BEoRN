@@ -1,3 +1,4 @@
+"""The process of converting the 1D radiation profiles into 3D maps"""
 import time
 import logging
 from itertools import product
@@ -56,7 +57,7 @@ class Painter:
         # write the empty file so that we can append to it later
         self.output_handler.write_file(self.parameters, multi_z_data)
 
-        self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots.")
+        self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
         # TODO - this loop could be parallelized using MPI
         for ii, z in enumerate(radiation_profiles.z_history):
             try:
@@ -91,11 +92,14 @@ class Painter:
         halo_catalog = HaloCatalog.load(self.parameters.simulation.halo_catalogs[loop_index], self.parameters)
         delta_b = load_delta_b(self.parameters, loop_index)
 
+        # now add the requested alpha functions to the halo catalog
+        halo_catalog.alpha = self.parameters.source.halo_catalog_alpha_function
+
         # find matching redshift between solver output and simulation snapshot.
         # this will raise an error if the needed profiles are not available
         # The loading is left in this function to allow for the possibility of parallelizing the painting
         zgrid = grid_model.z_history[z_index]
-        mass_range = grid_model.Mh_history[..., z_index]
+        mass_range = grid_model.halo_mass_bins[..., z_index]
 
         # TODO - what exactly is coef
         coef = constants.rhoc0 * self.parameters.cosmology.h ** 2 * self.parameters.cosmology.Ob * (1 + zgrid) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
@@ -161,7 +165,7 @@ class Painter:
             buffer_xal = None
 
         with ProcessPoolExecutor(max_workers=self.parameters.simulation.cores) as executor:
-            # if only one process is used, we won't make use of the executor, but it allows us to keep the code more concise
+            # if only one process is used, we won't make use of the executor
             futures = []
             total_halos = 0
 
@@ -176,14 +180,20 @@ class Painter:
             # For each profile we have a range of mass and alpha values where we can pick haloes from
             # We just need to ensure that all haloes are considered in the end (hence the total_halos check)
 
-            self.logger.info(f"Using {self.parameters.simulation.cores} processes for painting.")
+            self.logger.debug(f"Using {self.parameters.simulation.cores} processes for painting.")
+            start_time = time.process_time()
 
             for alpha_index, mass_index in product(alpha_indices, mass_indices):
-                loop_alpha_range = [self.parameters.simulation.halo_mass_accretion_alpha[alpha_index], self.parameters.simulation.halo_mass_accretion_alpha[alpha_index + 1]]
-                # as mentioned above, the mass range is not constant but depends on the redshift
-                m_range_base = [self.parameters.simulation.halo_mass_bins[mass_index], self.parameters.simulation.halo_mass_bins[mass_index + 1]]
-                loop_mass_range = np.array(m_range_base) * np.exp(self.parameters.simulation.halo_mass_accretion_alpha[alpha_index] * (self.parameters.solver.redshifts.min() - zgrid))
-
+                # the alpha range is simply defined by the parameters
+                loop_alpha_range = [
+                    self.parameters.simulation.halo_mass_accretion_alpha[alpha_index],
+                    self.parameters.simulation.halo_mass_accretion_alpha[alpha_index + 1]
+                ]
+                # the mass range shifts with the redshift so we need to take the mass range for the current redshift and take the bins from there
+                loop_mass_range = [
+                    mass_range[mass_index, alpha_index],
+                    mass_range[mass_index + 1, alpha_index]
+                ]
                 halo_indices = halo_catalog.get_halo_indices(loop_alpha_range, loop_mass_range)
                 total_halos += halo_indices.size
 
@@ -196,7 +206,7 @@ class Painter:
                 radial_grid = grid_model.r_grid_cell / (1 + zgrid)  # pMpc/h
                 kwargs = {
                     "halo_catalog": halo_catalog.at_indices(halo_indices),
-                    "zgrid": zgrid,
+                    "z": zgrid,
                     # profiles related quantities
                     "radial_grid": radial_grid,
                     "r_lyal": grid_model.r_lyal,
@@ -238,25 +248,26 @@ class Painter:
         buffer_xal.close()
         buffer_xal.unlink()
 
-        self.logger.info('Profile painting done. Redistributing excess photons from the overlapping regions.')
+        self.logger.info(f'Profile painting took {time.process_time() - start_time:.2} seconds.')
+
+        ## Excess spreading
         start_time = time.process_time()
         if np.sum(Grid_xHII) < self.parameters.simulation.Ncell ** 3:
             Grid_xHII = spreading_excess_fast(self.parameters, Grid_xHII)
         else:
+            self.logger.info("Universe is fully ionized, setting xHII to 1 everywhere.")
             Grid_xHII = zero_grid + 1
+        self.logger.info(f'Redistributing excess photons from the overlapping regions took {time.process_time() - start_time:.2} seconds.')
 
-        self.logger.info(f'Overlap processing done. Took {time.process_time() - start_time:.2} seconds.')
 
-
-        ## Post processing on the already filled grids
+        ## Post processing of the already filled grids
         # take into account the background temperature
         Grid_Temp += T_adiab_fluctu(zgrid, self.parameters, delta_b)
 
         # Enforce a minimum ionization fraction
-        # TODO is this necessary?
         Grid_xHII[Grid_xHII < self.parameters.source.min_xHII_value] = self.parameters.source.min_xHII_value
 
-
+        # Include fluctuations
         if self.parameters.simulation.compute_s_alpha_fluctuations:
             self.logger.debug('Including Salpha fluctuations in dTb')
             Grid_xal *= S_alpha(zgrid, Grid_Temp, 1 - Grid_xHII) / (4 * np.pi)
@@ -315,7 +326,7 @@ class Painter:
         self,
         halo_catalog: HaloCatalog,
         # profile related quantities - we don't want to pass the whole radiation_profiles object
-        zgrid: float,
+        z: float,
         radial_grid: np.ndarray,
         r_lyal: np.ndarray,
         profiles_of_bin: tuple[np.ndarray, np.ndarray, np.ndarray],
@@ -340,29 +351,29 @@ class Painter:
             # initialize the output grid over the shared memory buffer
             output_grid_xHII = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_xHII.buf)
             x_HII_profile = np.zeros((len(radial_grid)))
-            x_HII_profile[np.where(radial_grid < R_bubble / (1 + zgrid))] = 1
+            x_HII_profile[np.where(radial_grid < R_bubble / (1 + z))] = 1
 
             # modify Grid_xHII in place
             self.paint_ionization_profile(
-                output_grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, zgrid, halo_grid
+                output_grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, z, halo_grid
             )
         if buffer_lyal:
             # initialize the output grid over the shared memory buffer
             output_grid_lyal = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_lyal.buf)
-            x_alpha_prof = 1.81e11 * (rho_alpha_) / (1 + zgrid)
-            # We add up S_alpha(zgrid, T_extrap, 1 - xHII_extrap) later, a the map level.
+            x_alpha_prof = 1.81e11 * (rho_alpha_) / (1 + z)
+            # We add up S_alpha(z, T_extrap, 1 - xHII_extrap) later, a the map level.
 
             # TODO - document how r_lyal is the physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
             # modify Grid_xal in place
             self.paint_alpha_profile(
-                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, zgrid, truncate, halo_grid
+                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, z, truncate, halo_grid
             )
         if buffer_temp:
             # initialize the output grid over the shared memory buffer
             output_grid_temp = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_temp.buf)
             # modify Grid_Temp in place
             self.paint_temperature_profile(
-                output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, zgrid, truncate, halo_grid
+                output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, z, truncate, halo_grid
             )
 
 

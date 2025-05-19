@@ -3,7 +3,6 @@ Generate the xHII field from the non linear density field using the excursion se
 """
 import copy
 import datetime
-import os.path
 import numpy as np
 from astropy.convolution import convolve_fft
 import warnings
@@ -11,7 +10,7 @@ import warnings
 from .halomassfunction import HaloMassFunction
 from .run import load_delta_b
 from .astro import f_esc, f_star_Halo
-from .computing_profiles import Ngdot_ion
+from .radiation_profiles.helpers import Ngdot_ion
 from .constants import *
 from .cosmo import *
 from .functions import *

@@ -65,7 +65,17 @@ class BaseStruct(ABC):
                 value = getattr(self, attr)
                 self.to_h5_field(h5file, attr, value)
 
-        logger.info(f"Data written to {file_path}")
+        file_size = file_path.stat().st_size
+        if file_size >= 1024 ** 3:
+            human_readable_size = f"{file_size / (1024 ** 3):.2f} GB"
+        elif file_size >= 1024 ** 2:
+            human_readable_size = f"{file_size / (1024 ** 2):.2f} MB"
+        else:
+            human_readable_size = f"{file_size / 1024:.2f} KB"
+        
+        logger.info(
+            f"Data written to {file_path} ({human_readable_size})"
+        )
 
 
     @classmethod

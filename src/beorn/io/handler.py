@@ -27,9 +27,7 @@ class Handler:
         self.file_root.mkdir(exist_ok = True)
         self.logger.info(f"Using persistence directory at {self.file_root}")
         if clear:
-            self.logger.info(f"Clearing persistence directory at {self.file_root}")
-            shutil.rmtree(self.file_root)
-            self.file_root.mkdir()
+            self.clear()
 
 
     def write_file(self, parameters: Parameters, obj: BaseStructDerived, **kwargs) -> Path:
@@ -52,3 +50,12 @@ class Handler:
             **kwargs: Additional keyword arguments that are converted to a string and appended to the file name.
         """
         return cls.read(directory=self.file_root, parameters=parameters, **kwargs)
+
+
+    def clear(self):
+        """
+        Clears the persistence directory. This is useful for testing purposes.
+        """
+        self.logger.info(f"Clearing persistence directory at {self.file_root}")
+        shutil.rmtree(self.file_root)
+        self.file_root.mkdir()

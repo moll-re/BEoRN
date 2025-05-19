@@ -11,7 +11,7 @@ from .constants import *
 from .functions import Beta, find_nearest
 from .cosmo import dTb_fct
 from .structs.parameters import Parameters
-from .computing_profiles import ProfileSolver
+from .radiation_profiles.solver import ProfileSolver
 
 def Delta_21cm_PS_fixed_k(k,PS,plot=True):
     kk, zz = PS['k'], PS['z']
@@ -558,7 +558,7 @@ def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_li
             alpha_val = parameters.simulation.halo_mass_accretion_alpha[ind_alpha]
 
             # the mass history is now uniquely defined:
-            Mh_i = profile.Mh_history[ind_M, ind_alpha, ind_z]
+            Mh_i = profile.halo_mass_bins[ind_M, ind_alpha, ind_z]
             # TODO - why the 0.68 factor? is this h?
             Mh_list.append(Mh_i / 0.68)
             actual_alpha_list.append(alpha_val)
@@ -604,7 +604,7 @@ def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_li
     ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simulation (Behroozi +20)')
 
     # plot our analytical data (and add one legend)
-    ax.semilogy(zz, profile.Mh_history[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {actual_alpha_list[0]:.2}$')
+    ax.semilogy(zz, profile.halo_mass_bins[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {actual_alpha_list[0]:.2}$')
 
     # style the plot
     ax.set_xlim(15, 5)

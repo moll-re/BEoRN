@@ -1,0 +1,3 @@
+[MASTER]
+# ignore line too long
+disable=line-too-long,wrong-import-position,logging-fstring-interpolation

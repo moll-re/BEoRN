@@ -10,6 +10,8 @@ from dataclasses import dataclass, field, is_dataclass, fields
 from typing import Literal, Union
 import numpy as np
 
+from .helpers import bin_centers
+
 
 @dataclass(slots = True)
 class SourceParameters:
@@ -78,7 +80,8 @@ class SourceParameters:
     min_xHII_value: int = 0
     """Lower limit for the ionization fraction. All pixels with xHII < min_xHII_value will be set to this value."""
 
-
+    halo_catalog_alpha_function: callable = lambda x: np.ones_like(x) * 0.79
+    """Function to compute the alpha function for the halo catalog. This is used to compute the mass accretion rate. The default is a constant function."""
 
 
 @dataclass(slots = True)
@@ -148,7 +151,7 @@ class SimulationParameters:
     kbin: int = 30
     """Number of k bins used for the power spectrum."""
 
-    spreading_pixel_threshold: Union[int, None] = None
+    spreading_pixel_threshold: int = None
     """When spreading the excess ionization fraction, treat all the connected regions with less than "thresh_pixel" as a single connected region (to speed up). If set to None, a default nonzero value will be used"""
 
     spreading_subgrid_approximation: bool = True
@@ -172,7 +175,15 @@ class SimulationParameters:
     # derived properties that are directly related to the parameters
     @property
     def halo_mass_bins(self) -> np.ndarray:
-        return np.logspace(np.log10(self.halo_mass_bin_min), np.log10(self.halo_mass_bin_max), self.halo_mass_bin_n, base=10)    
+        return np.logspace(np.log10(self.halo_mass_bin_min), np.log10(self.halo_mass_bin_max), self.halo_mass_bin_n, base=10)
+
+    @property
+    def halo_mass_bin_centers(self) -> np.ndarray:
+        return bin_centers(self.halo_mass_bins)
+
+    @property
+    def halo_mass_accreation_alpha_bin_centers(self) -> np.ndarray:
+        return bin_centers(self.halo_mass_accretion_alpha)
 
     @property
     def kbins(self) -> np.ndarray:

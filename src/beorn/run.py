@@ -16,7 +16,7 @@ from .profiles_on_grid import profile_to_3Dkernel, spreading_excess_fast, put_pr
 from .couplings import x_coll, S_alpha, x_coll_coef
 from .global_qty import xHII_approx, compute_glob_qty
 from .cosmo import dTb_factor, Tspin_fct
-from .computing_profiles import ProfileSolver
+from .radiation_profiles.solver import ProfileSolver
 from .functions import *
 from .structs.parameters import Parameters
 

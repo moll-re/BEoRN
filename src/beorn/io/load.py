@@ -31,7 +31,7 @@ def load_delta_b(parameters: Parameters, index: int):
         delta_b = load_21cmfast_density_field(field_path, LBox)
 
     else:
-        raise Exception('param.sim.dens_field_type should be either 21cmFAST or pkdgrav.')
+        raise TypeError('param.sim.dens_field_type should be either 21cmFAST or pkdgrav.')
 
     if nGrid != delta_b.shape[0]:
         # delta_b = reshape_grid(delta_b, nGrid)

@@ -26,13 +26,11 @@ class HaloCatalog:
         assert self.X.size == self.Y.size and self.X.size == self.Z.size and self.X.size == self.M.size, "Halo catalog arrays must have the same length."
 
 
-    @property
-    def alpha(self) -> np.ndarray:
+    def alpha(self, x: np.ndarray) -> np.ndarray:
         """
         Halo mass accretion rate.
         """
-        # TODO determine based on the ACTUAL halo mass history
-        return np.ones_like(self.M) * 0.79
+        return x
 
 
     def get_halo_indices(self, alpha_range: list[int], mass_range: list[int]) -> np.ndarray:
@@ -47,16 +45,17 @@ class HaloCatalog:
         mass_inf, mass_sup = mass_range
 
         # Get the indices of the halos that are within the mass and alpha range
+        alphas = self.alpha(self.X)
         indices_match = np.where(
-            (self.M >= mass_inf) & (self.M <= mass_sup) &
-            (self.alpha >= alpha_inf) & (self.alpha <= alpha_sup)
+            (self.M >= mass_inf) & (self.M < mass_sup) &
+            (alphas >= alpha_inf) & (alphas < alpha_sup)
         )[0]
         # in this case where returns two arrays, we only want the first one
 
         if indices_match.size != 0:
             logger.debug(
-                "alpha_range=%s, mass_range=%s -> %d matches",
-                (alpha_inf, alpha_sup), (mass_inf, mass_sup), len(indices_match)
+                "alpha_range=(%.2f, %.2f), mass_range=(%.2e, %.2e) -> %d matches",
+                alpha_inf, alpha_sup, mass_inf, mass_sup, len(indices_match)
             )
         return indices_match
 
@@ -143,7 +142,7 @@ class HaloCatalog:
     def load(cls, path: Path, parameters: Parameters) -> "HaloCatalog":
         """
         Load halo catalogues from storage. Depending on the type specified in the parameters, it will either load from 21cmFAST or Pkdgrav data.
-    
+
         Parameters
         ----------
         path : str
