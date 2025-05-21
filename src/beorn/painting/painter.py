@@ -9,7 +9,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from astropy.convolution import convolve_fft
 
-from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel#, spread_excess_ionization
+from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel, spread_excess_ionization
 from ..cosmo import T_adiab_fluctu, dTb_factor, dTb_fct
 from .. import constants
 from ..couplings import x_coll, S_alpha
@@ -21,7 +21,7 @@ from ..structs.snapshot_profiles import GridData
 from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
 
-from .spread import spread_excess_ionization
+# from .spread import spread_excess_ionization
 
 
 CONVOLVE_FFT_KWARGS = {
@@ -252,6 +252,7 @@ class Painter:
 
         ## Excess spreading
         start_time = time.process_time()
+        # TODO - delegate this to the spread function
         if np.sum(Grid_xHII) < self.parameters.simulation.Ncell ** 3:
             Grid_xHII = spread_excess_ionization(self.parameters, Grid_xHII)
         else:
