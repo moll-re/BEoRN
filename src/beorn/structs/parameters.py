@@ -319,5 +319,7 @@ def make_hashable(item):
         return frozenset(item.items())
     elif isinstance(item, Path):
         return item.as_posix()
+    elif callable(item):
+        return item.__name__
     else:
         return item

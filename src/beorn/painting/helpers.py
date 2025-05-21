@@ -1,5 +1,7 @@
 """Helpers for the painting module."""
 import numpy as np
+from multiprocessing import shared_memory
+from concurrent.futures import ProcessPoolExecutor, wait
 from scipy.ndimage import distance_transform_edt
 from scipy.interpolate import interp1d
 from skimage.measure import label
@@ -31,7 +33,7 @@ def profile_to_3Dkernel(profile: callable, nGrid: np.ndarray, LB: int) -> np.nda
 
 
 
-def spreading_excess_fast(parameters: Parameters, input_grid: np.ndarray, show_plot=False):
+def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray, show_plot=False):
     """
     This function spreads the excess ionizing photons in the grid. It uses a distance transform to find the closest ionized region and spread the excess photons to it, enlarging the space of the ionized region.
 
@@ -97,23 +99,47 @@ def spreading_excess_fast(parameters: Parameters, input_grid: np.ndarray, show_p
     logger.debug(f'there are {len(small_regions_labels)} small connected regions with less than {pix_thresh} pixels. They contain a fraction {excess_ion / total_ionizing_fraction_initial:.4e} of the total ionisation fraction.')
 
     # Do the spreading for the small regions
-    output_grid = spread_single(parameters, output_grid, small_regions)
+    spread_excess_ionization_single_region(parameters, output_grid, small_regions)
     assert not np.any(output_grid[small_regions] > 1), 'Small regions not correctly spread.'
 
-    all_regions_labels = np.array(range(1, label_max + 1))  # the remaining larges overlapping ionized regions
+    # the remaining larges overlapping ionized regions
+    all_regions_labels = np.arange(1, label_max + 1, dtype=int)
     large_regions_labels = all_regions_labels[np.where(np.isin(all_regions_labels, small_regions_labels) == False)[0]]
+    # large_regions_labels = all_regions_labels[np.where(not np.isin(all_regions_labels, small_regions_labels))]
     # indices of regions that have more than pix_thresh pixels
 
-    # Then do the spreading individually for large regions
-    logger.debug(f"Spreading the {len(large_regions_labels)} large regions.")
-    for i, ir in enumerate(large_regions_labels):
-        if show_plot and i % 100 == 0:
-            # TODO - actually show the plot
-            logger.debug(f'Applying spread_single on region {i}/{len(large_regions_labels)}')
-        connected_indices = np.where(label_image == ir)
-        output_grid = spread_single(parameters, output_grid, connected_indices)
 
-    assert not np.any(output_grid > 1), 'Some grid pixels are still in excess.'
+    # Do the spreading individually for large regions, but parallelize the process
+    if large_regions_labels.size > 0:
+        logger.debug(f"Spreading {len(large_regions_labels)} large regions.")
+        size = input_grid.size * np.dtype(np.float64).itemsize
+        buffer = shared_memory.SharedMemory(create=True, size=size)
+        output_grid_shared = np.ndarray(input_grid.shape, dtype=np.float64, buffer=buffer.buf)
+        output_grid_shared[:] = input_grid[:]
+
+        futures = []
+
+        with ProcessPoolExecutor(max_workers=parameters.simulation.cores) as executor:
+            for i, l in enumerate(large_regions_labels):
+                connected_indices = np.where(label_image == l)
+                f = executor.submit(spread_excess_ionization_single_region, parameters, buffer, connected_indices)
+                futures.append(f)
+            
+            
+            completed, uncompleted = wait(futures)
+            assert len(uncompleted) == 0, "Not all spreading subprocesses completed successfully"
+
+
+        # clean up the shared memory buffers - but keep the data in the buffer
+        output_grid = np.ndarray(input_grid.shape, dtype=np.float64, buffer=buffer.buf)
+        output_grid = output_grid_shared.copy()
+
+
+        buffer.close()
+        buffer.unlink()
+
+    logger.debug(f"{np.any(output_grid > 1)}")
+    # assert not np.any(output_grid > 1), 'Some grid pixels are still in excess.'
 
     total_ionization_fraction_final = np.sum(output_grid)
     logger.debug(f'Final xion sum: {total_ionization_fraction_final:.3f}')
@@ -125,161 +151,168 @@ def spreading_excess_fast(parameters: Parameters, input_grid: np.ndarray, show_p
 
 
 
-def spread_single(parameters: Parameters, Grid, connected_indices):
+def spread_excess_ionization_single_region(parameters: Parameters, Grid: np.ndarray | shared_memory.SharedMemory, connected_indices):
     """
-    This spreads the excess ionizing photons for a given region.
+    Spreads the excess ionization_fraction for a given region by modifying the grid in place.
     Input :
     - Grid : The meshgrid containing the ionizing fractions
     - Connected_indices : The indices of the ionized region from which you want to spread the overlaps. (excess_ion)
-    - print_time : if it's not None, will print the time taken, along with the message contained in "print_time".
 
-    Return : the same grid but with the excess ion fraction of the connected region spread around.
 
     Trick : we run distance_transform only for a sub-box centered on the connected region. This is particularly important for high resolution grids, when distance_transform_edt starts to take time (~s, but multilplied by the number of connected regions >1e4, starts taking time...)
             the size of the subbox is N_subgrid. It is called Sub_Grid.
     """
 
-    nGrid = len(Grid[0])
+    if isinstance(Grid, shared_memory.SharedMemory):
+        # If Grid is a shared memory object, create a numpy array from it
+        Grid = np.ndarray((Grid.shape[0], Grid.shape[1], Grid.shape[2]), dtype=np.float64, buffer=Grid.buf)
+
+    nGrid = Grid.shape[0]
 
     initial_excess = np.sum(Grid[connected_indices] - 1)
     Grid[connected_indices] = np.where(Grid[connected_indices] > 1, 1, Grid[connected_indices])
     excess_ion = initial_excess
 
-    if initial_excess > 1e-8:
-        ## take sub grid with only the connected region, find pixels where xion>1, sum the excess, and set these pixels to 1.
-        Inverted_grid = np.full(((nGrid, nGrid, nGrid)), 1)
-        Inverted_grid[connected_indices] = 0
-        sum_distributed_xion = 0
+    if initial_excess < 1e-8:
+        # If the excess is too small, just return the grid
+        # TODO - does this really improve the performance?
+        return Grid
+    
+    ## take sub grid with only the connected region, find pixels where xion>1, sum the excess, and set these pixels to 1.
+    Inverted_grid = np.full(((nGrid, nGrid, nGrid)), 1)
+    Inverted_grid[connected_indices] = 0
+    sum_distributed_xion = 0
 
-        # TODO - what are these???
-        Delta_pixel = int(excess_ion ** (1. / 3) / 2) + 1
+    # TODO - what are these???
+    Delta_pixel = int(excess_ion ** (1. / 3) / 2) + 1
 
-        Min_X, Max_X = np.min(connected_indices[0]), np.max(connected_indices[0])
-        Min_Y, Max_Y = np.min(connected_indices[1]), np.max(connected_indices[1])
-        Min_Z, Max_Z = np.min(connected_indices[2]), np.max(connected_indices[2])
-        Delta_max = np.max((Max_X - Min_X + 0, Max_Y - Min_Y + 0, Max_Z - Min_Z + 0))
-        Center_X, Center_Y, Center_Z = int((Min_X + Max_X) / 2), int((Min_Y + Max_Y) / 2), int((Min_Z + Max_Z) / 2)
+    Min_X, Max_X = np.min(connected_indices[0]), np.max(connected_indices[0])
+    Min_Y, Max_Y = np.min(connected_indices[1]), np.max(connected_indices[1])
+    Min_Z, Max_Z = np.min(connected_indices[2]), np.max(connected_indices[2])
+    Delta_max = np.max((Max_X - Min_X + 0, Max_Y - Min_Y + 0, Max_Z - Min_Z + 0))
+    Center_X, Center_Y, Center_Z = int((Min_X + Max_X) / 2), int((Min_Y + Max_Y) / 2), int((Min_Z + Max_Z) / 2)
 
-        if parameters.simulation.spreading_subgrid_approximation:
-            # Is this flag is True, set the subgrid size
-            N_subgrid = 2 * (Delta_max + 2 * Delta_pixel)
-            # length of subgrid embedding the connected region
-            N_subgrid += N_subgrid % 2
-            # Ensure N_subgrid is even
+    if parameters.simulation.spreading_subgrid_approximation:
+        # Is this flag is True, set the subgrid size
+        N_subgrid = 2 * (Delta_max + 2 * Delta_pixel)
+        # length of subgrid embedding the connected region
+        N_subgrid += N_subgrid % 2
+        # Ensure N_subgrid is even
 
-        else:
-            # If the flag is False, then set N_subgrid > nGrid, so that we never do the subbox trick (this is to check if the trick gives good results compared to the full)
-            N_subgrid = nGrid + 1
+    else:
+        # If the flag is False, then set N_subgrid > nGrid, so that we never do the subbox trick (this is to check if the trick gives good results compared to the full)
+        N_subgrid = nGrid + 1
 
-        if N_subgrid > nGrid:
-            dist_from_boundary = distance_transform_edt(Inverted_grid)
-            dist_from_boundary[np.where(dist_from_boundary == 0)] = 2 * nGrid  ### eliminate pixels inside boundary
-            dist_from_boundary[np.where(
-                Grid > 1)] = 2 * nGrid  ### eliminate pixels that already have excess x_ion (belonging to another connected regions..)
+
+    if N_subgrid > nGrid:
+        dist_from_boundary = distance_transform_edt(Inverted_grid)
+        dist_from_boundary[np.where(dist_from_boundary == 0)] = 2 * nGrid  ### eliminate pixels inside boundary
+        dist_from_boundary[np.where(
+            Grid > 1)] = 2 * nGrid  ### eliminate pixels that already have excess x_ion (belonging to another connected regions..)
+        minimum = np.min(dist_from_boundary)
+        boundary = np.where(dist_from_boundary == minimum)  # np.where((dist_from_boundary == minimum )& ( Grid<1))
+
+        while np.sum(1 - Grid[boundary]) < excess_ion:
+            sum_distributed_xion += np.sum(1 - Grid[boundary])
+            excess_ion = excess_ion - np.sum(1 - Grid[boundary])
+            Grid[boundary] = 1
+            dist_from_boundary[boundary] = nGrid * 2  ### exclude this layer for next step
             minimum = np.min(dist_from_boundary)
-            boundary = np.where(dist_from_boundary == minimum)  # np.where((dist_from_boundary == minimum )& ( Grid<1))
-
-            while np.sum(1 - Grid[boundary]) < excess_ion:
-                sum_distributed_xion += np.sum(1 - Grid[boundary])
-                excess_ion = excess_ion - np.sum(1 - Grid[boundary])
-                Grid[boundary] = 1
-                dist_from_boundary[boundary] = nGrid * 2  ### exclude this layer for next step
-                minimum = np.min(dist_from_boundary)
-                boundary = np.where(dist_from_boundary == minimum)  ### new closest region to fill with excess ion
-            # you go out of the *while* when np.sum(1 - Grid[boundary]) > excess_ion
-            residual_excess = (1 - Grid[boundary]) * excess_ion / np.sum(1 - Grid[boundary])
-            Grid[boundary] += residual_excess
-            sum_distributed_xion += excess_ion
+            boundary = np.where(dist_from_boundary == minimum)  ### new closest region to fill with excess ion
+        # you go out of the *while* when np.sum(1 - Grid[boundary]) > excess_ion
+        residual_excess = (1 - Grid[boundary]) * excess_ion / np.sum(1 - Grid[boundary])
+        Grid[boundary] += residual_excess
+        sum_distributed_xion += excess_ion
 
 
-        else:
+    else:
 
+        Sub_Grid = np.full(((N_subgrid, N_subgrid, N_subgrid)), 0)
+
+        Sub_Grid = Sub_Grid.astype('float64')
+
+        Sub_Grid[:] = Grid[np.max((Center_X - int(N_subgrid / 2), 0)) - np.max(
+            (0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+            (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
+                        np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max(
+                            (0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+                            (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Y)),
+                        np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max(
+                            (0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+                            (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Z))]
+
+        while np.sum(1 - Sub_Grid) < excess_ion:
+            # just check if Sub_Grid has enough room for excess_ion. If not, increase its size N_subgrid.
+            # Here be dragons
+            # TODO - what a great piece of code.
+            N_subgrid = N_subgrid + 2
             Sub_Grid = np.full(((N_subgrid, N_subgrid, N_subgrid)), 0)
-
             Sub_Grid = Sub_Grid.astype('float64')
-
             Sub_Grid[:] = Grid[np.max((Center_X - int(N_subgrid / 2), 0)) - np.max(
                 (0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
                 (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
-                          np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max(
-                              (0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                              (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Y)),
-                          np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max(
-                              (0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                              (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Z))]
+                            np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max(
+                                (0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+                                (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max(
+                                (0, int(N_subgrid / 2) - Center_Y)),
+                            np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max(
+                                (0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+                                (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max(
+                                (0, int(N_subgrid / 2) - Center_Z))]
 
-            while np.sum(1 - Sub_Grid) < excess_ion:
-                # just check if Sub_Grid has enough room for excess_ion. If not, increase its size N_subgrid.
-                # Here be dragons
-                # TODO - what a great piece of code.
-                N_subgrid = N_subgrid + 2
-                Sub_Grid = np.full(((N_subgrid, N_subgrid, N_subgrid)), 0)
-                Sub_Grid = Sub_Grid.astype('float64')
-                Sub_Grid[:] = Grid[np.max((Center_X - int(N_subgrid / 2), 0)) - np.max(
-                    (0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                    (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
-                              np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max(
-                                  (0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                                  (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max(
-                                  (0, int(N_subgrid / 2) - Center_Y)),
-                              np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max(
-                                  (0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                                  (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max(
-                                  (0, int(N_subgrid / 2) - Center_Z))]
+        Sub_Inverted_Grid = np.full(((N_subgrid, N_subgrid, N_subgrid)), 1)
+        Sub_Inverted_Grid = Sub_Inverted_Grid.astype('float64')
+        Sub_Inverted_Grid[:] = Inverted_grid[np.max((Center_X - int(N_subgrid / 2), 0)) - np.max(
+            (0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+            (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
+                                np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max(
+                                    (0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+                                    (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max(
+                                    (0, int(N_subgrid / 2) - Center_Y)),
+                                np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max(
+                                    (0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+                                    (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max(
+                                    (0, int(N_subgrid / 2) - Center_Z))]
 
-            Sub_Inverted_Grid = np.full(((N_subgrid, N_subgrid, N_subgrid)), 1)
-            Sub_Inverted_Grid = Sub_Inverted_Grid.astype('float64')
-            Sub_Inverted_Grid[:] = Inverted_grid[np.max((Center_X - int(N_subgrid / 2), 0)) - np.max(
-                (0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
-                                   np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max(
-                                       (0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                                       (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max(
-                                       (0, int(N_subgrid / 2) - Center_Y)),
-                                   np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max(
-                                       (0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                                       (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max(
-                                       (0, int(N_subgrid / 2) - Center_Z))]
+        Sub_Grid_Initiale = np.copy(Sub_Grid)
 
-            Sub_Grid_Initiale = np.copy(Sub_Grid)
+        dist_from_boundary = distance_transform_edt(Sub_Inverted_Grid)
+        dist_from_boundary[np.where(dist_from_boundary == 0)] = 2 * N_subgrid  ### eliminate pixels inside boundary
+        dist_from_boundary[np.where(
+            Sub_Grid >= 1)] = 2 * N_subgrid  ### eliminate pixels that already have excess x_ion (belonging to another connected regions..)
+        minimum = np.min(dist_from_boundary)
+        boundary = np.where(dist_from_boundary == minimum)
 
-            dist_from_boundary = distance_transform_edt(Sub_Inverted_Grid)
-            dist_from_boundary[np.where(dist_from_boundary == 0)] = 2 * N_subgrid  ### eliminate pixels inside boundary
-            dist_from_boundary[np.where(
-                Sub_Grid >= 1)] = 2 * N_subgrid  ### eliminate pixels that already have excess x_ion (belonging to another connected regions..)
+        excess_ion_i = excess_ion
+        while np.sum(1 - Sub_Grid[boundary]) < excess_ion:
+            sum_distributed_xion += np.sum(1 - Sub_Grid[boundary])
+            excess_ion = excess_ion - np.sum(1 - Sub_Grid[boundary])
+            Sub_Grid[boundary] = 1
+            dist_from_boundary[boundary] = N_subgrid * 2  ### exclude this layer for nex
             minimum = np.min(dist_from_boundary)
-            boundary = np.where(dist_from_boundary == minimum)
+            boundary = np.where(
+                dist_from_boundary == minimum)  ### new closest region to fill # you go out of the *while* when np.sum(1 - Grid[boundary]) > excess_ion
 
-            excess_ion_i = excess_ion
-            while np.sum(1 - Sub_Grid[boundary]) < excess_ion:
-                sum_distributed_xion += np.sum(1 - Sub_Grid[boundary])
-                excess_ion = excess_ion - np.sum(1 - Sub_Grid[boundary])
-                Sub_Grid[boundary] = 1
-                dist_from_boundary[boundary] = N_subgrid * 2  ### exclude this layer for nex
-                minimum = np.min(dist_from_boundary)
-                boundary = np.where(
-                    dist_from_boundary == minimum)  ### new closest region to fill # you go out of the *while* when np.sum(1 - Grid[boundary]) > excess_ion
+        residual_excess = (1 - Sub_Grid[boundary]) * excess_ion / np.sum(1 - Sub_Grid[boundary])
 
-            residual_excess = (1 - Sub_Grid[boundary]) * excess_ion / np.sum(1 - Sub_Grid[boundary])
+        Sub_Grid[boundary] = np.add(Sub_Grid[boundary], residual_excess)
+        sum_distributed_xion += excess_ion
 
-            Sub_Grid[boundary] = np.add(Sub_Grid[boundary], residual_excess)
-            sum_distributed_xion += excess_ion
+        Grid[
+        np.max((Center_X - int(N_subgrid / 2), 0)) - np.max((0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+            (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
+        np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max((0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+            (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Y)),
+        np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max((0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
+            (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Z))] = Sub_Grid[:]
 
-            Grid[
-            np.max((Center_X - int(N_subgrid / 2), 0)) - np.max((0, Center_X + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                (nGrid, Center_X + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_X)),
-            np.max((Center_Y - int(N_subgrid / 2), 0)) - np.max((0, Center_Y + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                (nGrid, Center_Y + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Y)),
-            np.max((Center_Z - int(N_subgrid / 2), 0)) - np.max((0, Center_Z + int(N_subgrid / 2) + 0 - nGrid)): np.min(
-                (nGrid, Center_Z + int(N_subgrid / 2) + 0)) + np.max((0, int(N_subgrid / 2) - Center_Z))] = Sub_Grid[:]
+        if np.any(Sub_Grid[boundary] > 1) or np.any(np.isnan(Sub_Grid[boundary])):
+            raise RuntimeError("Encountered invalid values in the grid during spreading.")
 
-            if np.any(Sub_Grid[boundary] > 1) or np.any(np.isnan(Sub_Grid[boundary])):
-                raise RuntimeError("Encountered invalid values in the grid during spreading.")
+        if round(int(np.sum(Sub_Grid)) / int(np.sum(Sub_Grid_Initiale) + excess_ion_i)) != 1:
+            raise RuntimeError("Spreading procedure did not conserve the photons. This should not happen.")
 
-            if round(int(np.sum(Sub_Grid)) / int(np.sum(Sub_Grid_Initiale) + excess_ion_i)) != 1:
-                raise RuntimeError("Spreading procedure did not conserve the photons. This should not happen.")
-
-    return Grid
+    # return Grid
 
 
 
