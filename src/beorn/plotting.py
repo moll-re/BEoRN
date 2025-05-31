@@ -11,7 +11,7 @@ from .constants import *
 from .functions import Beta, find_nearest
 from .cosmo import dTb_fct
 from .structs.parameters import Parameters
-from .radiation_profiles.solver import ProfileSolver
+from .structs.radiation_profiles import RadiationProfiles
 
 def Delta_21cm_PS_fixed_k(k,PS,plot=True):
     kk, zz = PS['k'], PS['z']
@@ -533,7 +533,7 @@ Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775
                    343109759067.9875])
 
 
-def plot_1D_profiles(parameters: Parameters, profile: ProfileSolver, ind_M, z_liste, alpha_list):
+def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste, alpha_list):
     from .cosmo import T_adiab
 
     fig, axs = plt.subplots(1, 4, figsize=(17, 5))

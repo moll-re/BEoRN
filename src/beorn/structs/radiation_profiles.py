@@ -34,9 +34,9 @@ class RadiationProfiles(BaseStruct):
         Returns the radiation profile for a given halo bin (z, alpha, mass).
         """
         return(
-            self.R_bubble[mass_index, alpha_index, z_index],
-            self.rho_alpha[:, mass_index, alpha_index, z_index],
-            self.rho_heat[:, mass_index, alpha_index, z_index]
+            self.R_bubble[mass_index, alpha_index, z_index].copy(),
+            self.rho_alpha[:, mass_index, alpha_index, z_index].copy(),
+            self.rho_heat[:, mass_index, alpha_index, z_index].copy(),
         )
 
     #TODO

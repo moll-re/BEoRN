@@ -1,5 +1,6 @@
 """Global description of the 3d data computed over multiple redshifts."""
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
+from pathlib import Path
 import h5py
 import numpy as np
 import logging
@@ -18,6 +19,19 @@ class GridDataMultiZ(BaseStruct):
     Appending a new redshift to this data automatically appends to the underlying hdf5 file.
     As such, once initialized (over a non-empty file)m this class has the SAME attributes as the GridData class, each with one additional axis at index 0.
     """
+
+    def create(self, parameters: Parameters, directory: Path, **kwargs) -> Path:
+        """
+        Creates an empty HDF5 file with the given file path. If the file already exists, it is not overwritten.
+        """
+        path = self.get_file_path(directory, parameters, **kwargs)
+        if path.exists():
+            logger.debug(f"File {path} already exists. Not overwriting.")
+            self._file_path = path
+            return path
+        else:
+            self.write(path)
+            return path
 
     def append(self, grid_data: GridData):
         """

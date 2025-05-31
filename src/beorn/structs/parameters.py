@@ -80,9 +80,10 @@ class SourceParameters:
     min_xHII_value: int = 0
     """Lower limit for the ionization fraction. All pixels with xHII < min_xHII_value will be set to this value."""
 
-    halo_catalog_alpha_function: callable = lambda x: np.ones_like(x) * 0.79
+    halo_catalog_alpha_function: callable = None
     """Function to compute the alpha function for the halo catalog. This is used to compute the mass accretion rate. The default is a constant function."""
 
+    mass_accretion_lookback: int = 0
 
 @dataclass(slots = True)
 class SolverParameters:

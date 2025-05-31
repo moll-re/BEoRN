@@ -38,9 +38,7 @@ class BaseStruct(ABC):
             hdf5_file = h5py.File(self._file_path, 'r')
             for dataset_name in hdf5_file.keys():
                 setattr(self, dataset_name, hdf5_file[dataset_name])
-
             logger.debug(f"Read data from {self._file_path}")
-        
 
 
     def write(self, file_path: Path = None, directory: Path = None, parameters: Parameters = None, **kwargs):

@@ -9,7 +9,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from astropy.convolution import convolve_fft
 
-from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel, spread_excess_ionization
+from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel
 from ..cosmo import T_adiab_fluctu, dTb_factor, dTb_fct
 from .. import constants
 from ..couplings import x_coll, S_alpha
@@ -20,8 +20,7 @@ from ..structs.parameters import Parameters
 from ..structs.snapshot_profiles import GridData
 from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
-
-# from .spread import spread_excess_ionization
+from .spread import spread_excess_ionization
 
 
 CONVOLVE_FFT_KWARGS = {
@@ -54,15 +53,14 @@ class Painter:
     def paint_full(self, radiation_profiles: RadiationProfiles) -> GridDataMultiZ:
         """Starts the painting process for the full redshift range."""
         multi_z_data = GridDataMultiZ()
-        # write the empty file so that we can append to it later
-        self.output_handler.write_file(self.parameters, multi_z_data)
+        multi_z_data.create(self.parameters, self.output_handler.file_root)
 
         self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
         # TODO - this loop could be parallelized using MPI
         for ii, z in enumerate(radiation_profiles.z_history):
             try:
                 GridData.read(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
-                self.logger.debug(f"Found painted output in cache for {z=}. Skipping.")
+                self.logger.info(f"Found painted output in cache for {z=}. Skipping.")
                 continue
             except FileNotFoundError:
                 self.logger.debug("Painted output not found in cache. Processing now")
@@ -85,15 +83,15 @@ class Painter:
     def paint_single(self, z_index: int, grid_model: RadiationProfiles, loop_index) -> GridData:
         """Paints the halo properties for a single redshift."""
 
-        start_time = time.process_time()
+        start_time = time.time()
         zero_grid = np.zeros((self.parameters.simulation.Ncell, self.parameters.simulation.Ncell, self.parameters.simulation.Ncell))
 
-        # TODO - these should be a parameter method
-        halo_catalog = HaloCatalog.load(self.parameters.simulation.halo_catalogs[loop_index], self.parameters)
+        halo_catalog = HaloCatalog.load(self.parameters, loop_index)
         delta_b = load_delta_b(self.parameters, loop_index)
 
-        # now add the requested alpha functions to the halo catalog
-        halo_catalog.alpha = self.parameters.source.halo_catalog_alpha_function
+        # set the requested alpha functions for the halo catalog or keep the default one
+        if not self.parameters.source.halo_catalog_alpha_function is None:
+            halo_catalog.alpha = self.parameters.source.halo_catalog_alpha_function
 
         # find matching redshift between solver output and simulation snapshot.
         # this will raise an error if the needed profiles are not available
@@ -110,13 +108,13 @@ class Painter:
         # 1. if there are no halos at all -> skip the painting
         # 2. if there are halos but they lie outside the mass range -> raise an error
 
-        if halo_catalog.M.max() > mass_range.max() or halo_catalog.M.min() < mass_range.min():
+        if halo_catalog.masses.max() > mass_range.max() or halo_catalog.masses.min() < mass_range.min():
             raise RuntimeError(f"The current halo catalog at z={zgrid} has a higher masse range than the mass range of the precomputed profiles. You need to adjust your parameters: either increase the mass range of the profile simulation (parameters.simulation) or decrease the mass range of star forming halos (parameters.source).")
 
-        self.logger.info(f'Painting {halo_catalog.M.size} halos at zgrid={zgrid:.2f}.')
+        self.logger.info(f'Painting {halo_catalog.size} halos at {zgrid=:.2f} ({z_index=:.0f}).')
 
         # Shortcut if there are no halos
-        if halo_catalog.M.size == 0:
+        if halo_catalog.size == 0:
             self.logger.debug("No halos to paint. Returning empty grid.")
             factor = dTb_factor(self.parameters)
 
@@ -181,7 +179,7 @@ class Painter:
             # We just need to ensure that all haloes are considered in the end (hence the total_halos check)
 
             self.logger.debug(f"Using {self.parameters.simulation.cores} processes for painting.")
-            start_time = time.process_time()
+            start_time = time.time()
 
             for alpha_index, mass_index in product(alpha_indices, mass_indices):
                 # the alpha range is simply defined by the parameters
@@ -202,14 +200,21 @@ class Painter:
                     continue
 
                 # since the profiles are are large and copied in the multiprocessing approach, we only pass the relevant slices
-                profiles_of_bin = grid_model.profiles_of_halo_bin(z_index, alpha_index, mass_index)
-                radial_grid = grid_model.r_grid_cell / (1 + zgrid)  # pMpc/h
+                # profiles_of_bin = grid_model.profiles_of_halo_bin(z_index, alpha_index, mass_index)
+
+                profiles_of_bin = (
+                    grid_model.R_bubble[mass_index, alpha_index, z_index],
+                    grid_model.rho_alpha[:, mass_index, alpha_index, z_index],
+                    grid_model.rho_heat[:, mass_index, alpha_index, z_index],
+                )
+
+                radial_grid = grid_model.r_grid_cell[:] / (1 + zgrid)  # pMpc/h
                 kwargs = {
                     "halo_catalog": halo_catalog.at_indices(halo_indices),
                     "z": zgrid,
                     # profiles related quantities
                     "radial_grid": radial_grid,
-                    "r_lyal": grid_model.r_lyal,
+                    "r_lyal": grid_model.r_lyal[:],
                     "profiles_of_bin": profiles_of_bin,
                     # shared memory buffers
                     "buffer_lyal": buffer_xal,
@@ -231,37 +236,42 @@ class Painter:
             # wait for all futures to complete
             completed, uncompleted = wait(futures)
             assert len(uncompleted) == 0, "Not all painting subprocesses completed successfully"
-            assert total_halos == halo_catalog.M.size, f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.M.size}. This is a bug."
+            # assert total_halos == halo_catalog.M.size, f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.M.size}. This is a bug."
+            self.logger.warning(f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.size}. This is a bug.")
 
         # clean up the shared memory buffers - but keep the data in the buffer
-        buffer_array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xHII.buf)
-        Grid_xHII = buffer_array.copy()
-        buffer_array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_Temp.buf)
-        Grid_Temp = buffer_array.copy()
-        buffer_array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xal.buf)
-        Grid_xal = buffer_array.copy()
+        if buffer_xHII:
+            array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xHII.buf)
+            Grid_xHII = array.copy()
+            buffer_xHII.close()
+            buffer_xHII.unlink()
+        else:
+            Grid_xHII = zero_grid
+        if buffer_Temp:
+            array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_Temp.buf)
+            Grid_Temp = array.copy()
+            buffer_Temp.close()
+            buffer_Temp.unlink()
+        else:
+            Grid_Temp = zero_grid
+        if buffer_xal:
+            array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xal.buf)
+            Grid_xal = array.copy()
+            buffer_xal.close()
+            buffer_xal.unlink()
+        else:
+            Grid_xal = zero_grid
 
-        buffer_xHII.close()
-        buffer_xHII.unlink()
-        buffer_Temp.close()
-        buffer_Temp.unlink()
-        buffer_xal.close()
-        buffer_xal.unlink()
-
-        self.logger.info(f'Profile painting took {time.process_time() - start_time:.2} seconds.')
+        self.logger.info(f'Profile painting took {time.time() - start_time:.2} seconds.')
 
         ## Excess spreading
-        start_time = time.process_time()
-        # TODO - delegate this to the spread function
-        if np.sum(Grid_xHII) < self.parameters.simulation.Ncell ** 3:
-            Grid_xHII = spread_excess_ionization(self.parameters, Grid_xHII)
-        else:
-            self.logger.info("Universe is fully ionized, setting xHII to 1 everywhere.")
-            Grid_xHII = zero_grid + 1
-        self.logger.info(f'Redistributing excess photons from the overlapping regions took {time.process_time() - start_time:.2} seconds.')
-
+        start_time = time.time()
+        Grid_xHII = spread_excess_ionization(self.parameters, Grid_xHII)
+        self.logger.info(f'Redistributing excess photons from the overlapping regions took {time.time() - start_time:.2} seconds.')
 
         ## Post processing of the already filled grids
+        start_time = time.time()
+
         # take into account the background temperature
         Grid_Temp += T_adiab_fluctu(zgrid, self.parameters, delta_b)
 
@@ -306,6 +316,8 @@ class Painter:
             Grid_dTb_no_reio = zero_grid
             Grid_dTb_T_sat = zero_grid
 
+        self.logger.info(f'Postprocessing of the grids took {time.time() - start_time:.2} seconds.')
+
         return GridData(
             z = zgrid,
             delta_b = delta_b,
@@ -345,7 +357,7 @@ class Painter:
         R_bubble, rho_alpha_, Temp_profile = profiles_of_bin
 
         # place the halos on the grid so that they can be used in a convolution
-        halo_grid = halo_catalog.to_mesh(self.parameters)
+        halo_grid = halo_catalog.to_mesh()
 
         # Every halo in the mass bin i is assumed to have the mass M_bin[i].
         if buffer_xHII:
