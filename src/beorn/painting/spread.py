@@ -61,7 +61,7 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
     # to later assert that the count was conserved
     initial_count = np.sum(input_grid)
     if initial_count > np.prod(input_grid.shape) * MAX_VALUE:
-        logger.info(f"Grid is fully ionized, no need to redistribute.")
+        logger.info("Grid is fully ionized, no need to redistribute.")
         input_grid.fill(MAX_VALUE)
         return
 
@@ -154,9 +154,7 @@ def process_excess_region(center: tuple[float, float, float], excess_value: floa
     offset = np.array([x_min, y_min, z_min], dtype=int)
     sub_grid = input_grid[x_min:x_max, y_min:y_max, z_min:z_max]
 
-    # if logger.isEnabledFor(logging.DEBUG):
-    #     if current_label % 100 == 0:
-    logger.debug(f"Processing excess region at {center} with {excess_value=:.2f} => {sub_grid.shape=}")
+    # logger.debug(f"Processing excess region at {center} with {excess_value=:.2f} => {sub_grid.shape=}")
 
     # Calculate distances within the sub-grid
     # since we know the center point we can directly compute the distance from the center

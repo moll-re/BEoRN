@@ -37,7 +37,7 @@ class HaloCatalog:
         """
         redshifts, mass_history = self.mass_history()
         if mass_history is None:
-            logger.warning("No mass history available for alpha calculation. Returning zeros.")
+            # logger.warning("No mass history available for alpha calculation. default mass accretion rate.")
             # Default value for alpha if no mass history is available
             return np.ones(x.size) * 0.79
 
@@ -50,12 +50,12 @@ class HaloCatalog:
 
     def mass_history(self) -> tuple[np.ndarray, np.ndarray]:
         if self.redshift_index == 0:
-            logger.warning("No past snapshots available for alpha calculation. Returning zeros.")
-            return None
+            # logger.debug("No past snapshots available for alpha calculation. Returning zeros.")
+            return None, None
 
         # TODO - infer mass accretion history EFFICIENTLY from merger tree data
         # for now we don't do this
-        return None
+        return None, None
 
         fudge_factor = 1e-2
         logger.debug(f"Calculating mass history for {self.parameters.source.mass_accretion_lookback} snapshots")
@@ -121,11 +121,11 @@ class HaloCatalog:
         )[0]
         # in this case where returns two arrays, we only want the first one
 
-        if indices_match.size != 0:
-            logger.debug(
-                "alpha_range=(%.2f, %.2f), mass_range=(%.2e, %.2e) -> %d matches",
-                alpha_inf, alpha_sup, mass_inf, mass_sup, len(indices_match)
-            )
+        # if indices_match.size != 0:
+        #     logger.debug(
+        #         "alpha_range=(%.2f, %.2f), mass_range=(%.2e, %.2e) -> %d matches",
+        #         alpha_inf, alpha_sup, mass_inf, mass_sup, len(indices_match)
+        #     )
         return indices_match
 
 
@@ -196,7 +196,7 @@ class HaloCatalog:
             catalog = np.ndarray((0, 4))
 
         return cls(
-            masses = catalog[:, 0] * parameters.cosmology.h,
+            masses = catalog[:, 0],
             # shift to center the box
             positions = catalog[:, 1:] + parameters.simulation.Lbox / 2,
             parameters = parameters,

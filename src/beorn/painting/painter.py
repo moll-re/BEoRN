@@ -266,7 +266,7 @@ class Painter:
 
         ## Excess spreading
         start_time = time.time()
-        Grid_xHII = spread_excess_ionization(self.parameters, Grid_xHII)
+        spread_excess_ionization(self.parameters, Grid_xHII)
         self.logger.info(f'Redistributing excess photons from the overlapping regions took {time.time() - start_time:.2} seconds.')
 
         ## Post processing of the already filled grids
