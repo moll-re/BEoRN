@@ -80,9 +80,6 @@ class SourceParameters:
     min_xHII_value: int = 0
     """Lower limit for the ionization fraction. All pixels with xHII < min_xHII_value will be set to this value."""
 
-    halo_catalog_alpha_function: callable = None
-    """Function to compute the alpha function for the halo catalog. This is used to compute the mass accretion rate. The default is a constant function."""
-
     mass_accretion_lookback: int = 0
 
 @dataclass(slots = True)
@@ -191,11 +188,14 @@ class SimulationParameters:
         return np.logspace(np.log10(self.kmin), np.log10(self.kmax), self.kbin, base=10)
 
 
+    halo_catalogs_thesan_tree: Path = None
+    halo_catalogs_thesan_offsets: Path = None
+
 @dataclass(slots = True)
 class CosmologyParameters:
     """
     Cosmological parameters for the simulation.
-    
+
     Attributes:
         Om: Matter density parameter.
         Ob: Baryon density parameter.
@@ -210,7 +210,7 @@ class CosmologyParameters:
         clumping: Rescale the background density. Set to 1 to get the normal 2h profile term.
         z_decoupling: Redshift at which the gas decouples from CMB and starts cooling adiabatically.
     """
-    
+
     Om: float = 0.31
     Ob: float = 0.045
     Ol: float = 0.68
@@ -229,7 +229,7 @@ class CosmologyParameters:
 class ExcursionSetParameters:
     """
     SemiNumerical Parameters
-    
+
     Attributes:
         R_max: Mpc/h. The scale at which we start the excursion set.
         n_rec: Mean number of recombination per baryon.
@@ -244,7 +244,7 @@ class ExcursionSetParameters:
 class HaloMassFunctionParameters:
     """
     Parameters related to analytical halo mass function (PS formalism. Used to compute variance in EPS_MAR, and for subhalo MF in excursion set).
-    
+
     Attributes:
         filter: tophat, sharpk or smoothk
         c: scale to halo mass relation (1 for tophat, 2.5 for sharp-k, 3 for smooth-k)

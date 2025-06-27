@@ -1,5 +1,6 @@
 """The process of converting the 1D radiation profiles into 3D maps"""
 import time
+from datetime import timedelta
 import logging
 from itertools import product
 from multiprocessing import shared_memory
@@ -14,14 +15,13 @@ from ..cosmo import T_adiab_fluctu, dTb_factor, dTb_fct
 from .. import constants
 from ..couplings import x_coll, S_alpha
 from ..io.handler import Handler
-from ..io.load import load_delta_b
 from ..structs.radiation_profiles import RadiationProfiles
 from ..structs.parameters import Parameters
 from ..structs.snapshot_profiles import GridData
 from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
 from .spread import spread_excess_ionization
-
+from ..load_input_data.load import load_halo_catalog, load_density_field
 
 CONVOLVE_FFT_KWARGS = {
     "boundary": "wrap",
@@ -49,7 +49,7 @@ class Painter:
         self.output_handler = output_handler
         self.cache_handler = cache_handler
 
-    
+
     def paint_full(self, radiation_profiles: RadiationProfiles) -> GridDataMultiZ:
         """Starts the painting process for the full redshift range."""
         multi_z_data = GridDataMultiZ()
@@ -83,15 +83,11 @@ class Painter:
     def paint_single(self, z_index: int, grid_model: RadiationProfiles, loop_index) -> GridData:
         """Paints the halo properties for a single redshift."""
 
-        start_time = time.time()
+        iteration_start_time = time.time()
         zero_grid = np.zeros((self.parameters.simulation.Ncell, self.parameters.simulation.Ncell, self.parameters.simulation.Ncell))
 
-        halo_catalog = HaloCatalog.load(self.parameters, loop_index)
-        delta_b = load_delta_b(self.parameters, loop_index)
-
-        # set the requested alpha functions for the halo catalog or keep the default one
-        if not self.parameters.source.halo_catalog_alpha_function is None:
-            halo_catalog.alpha = self.parameters.source.halo_catalog_alpha_function
+        halo_catalog = load_halo_catalog(self.parameters, loop_index)
+        delta_b = load_density_field(self.parameters, loop_index)
 
         # find matching redshift between solver output and simulation snapshot.
         # this will raise an error if the needed profiles are not available
@@ -109,7 +105,7 @@ class Painter:
         # 2. if there are halos but they lie outside the mass range -> raise an error
 
         if halo_catalog.masses.max() > mass_range.max() or halo_catalog.masses.min() < mass_range.min():
-            raise RuntimeError(f"The current halo catalog at z={zgrid} has a higher masse range than the mass range of the precomputed profiles. You need to adjust your parameters: either increase the mass range of the profile simulation (parameters.simulation) or decrease the mass range of star forming halos (parameters.source).")
+            raise RuntimeError(f"The current halo catalog at z={zgrid} has a higher masse range ({halo_catalog.masses.max():.2e} - {halo_catalog.masses.min():.2e}) than the mass range of the precomputed profiles ({mass_range.max():.2e} - {mass_range.min():.2e}). You need to adjust your parameters: either increase the mass range of the profile simulation (parameters.simulation) or decrease the mass range of star forming halos (parameters.source).")
 
         self.logger.info(f'Painting {halo_catalog.size} halos at {zgrid=:.2f} ({z_index=:.0f}).')
 
@@ -262,12 +258,12 @@ class Painter:
         else:
             Grid_xal = zero_grid
 
-        self.logger.info(f'Profile painting took {time.time() - start_time:.2} seconds.')
+        self.logger.info(f'Profile painting took {timedelta(seconds=time.time() - start_time)}.')
 
         ## Excess spreading
         start_time = time.time()
         spread_excess_ionization(self.parameters, Grid_xHII)
-        self.logger.info(f'Redistributing excess photons from the overlapping regions took {time.time() - start_time:.2} seconds.')
+        self.logger.info(f'Redistributing excess photons from the overlapping regions took {timedelta(seconds=time.time() - start_time)}.')
 
         ## Post processing of the already filled grids
         start_time = time.time()
@@ -316,7 +312,8 @@ class Painter:
             Grid_dTb_no_reio = zero_grid
             Grid_dTb_T_sat = zero_grid
 
-        self.logger.info(f'Postprocessing of the grids took {time.time() - start_time:.2} seconds.')
+        self.logger.info(f'Postprocessing of the grids took {timedelta(seconds=time.time() - start_time)}.')
+        self.logger.info(f'Current snapshot took {timedelta(seconds=time.time() - iteration_start_time)}.')
 
         return GridData(
             z = zgrid,
@@ -453,7 +450,7 @@ class Painter:
 
         if np.any(kernel_xal > 0):
             renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
-            
+
             output_grid += convolve_fft(
                 array = halo_grid,
                 kernel = kernel_xal * 1e-7 / np.sum(kernel_xal),
