@@ -75,7 +75,10 @@ def T_adiab(z, parameters: Parameters):
 def T_adiab_fluctu(z, parameters: Parameters, delta_b):
     """
     Fluctuating adiabatic background.
-    delta_b : matter overdensity
+    delta_b : matter overdensity#
+
+    # TODO document how delta_b is inferred from the DM overdensity field (in this case delta_b = delta_DM)
+
     """
     return T_adiab(z, parameters) * (1 + delta_b) ** (2 / 3)
 
@@ -87,7 +90,7 @@ def E(x, parameters: Parameters):
 
 def D_non_normalized(a, parameters: Parameters):
     """
-    a : input array 
+    a : input array
     Integrate from a~0 (0.001) to a. We checked that it gives same results than integrate.quad for z=0 to 30
     """
     if np.any(a<0.001):

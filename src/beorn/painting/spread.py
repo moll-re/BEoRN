@@ -26,7 +26,7 @@ def subgrid_boundaries(center: tuple[float, float, float], sub_grid_radius: int,
     """
     x, y, z = center
     x_range, y_range, z_range = np.array([0, 0], dtype=int), np.array([0, 0], dtype=int), np.array([0, 0], dtype=int)
-    
+
     for j, j_range in zip((x, y, z), (x_range, y_range, z_range)):
         if j < sub_grid_radius:
             j_range[0] = 0
@@ -56,7 +56,7 @@ def spherical_distance_grid(shape: tuple[int, int, int]):
 
 def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
     """
-    Spreads the excess ionization values in the input grid to ensure that no cell exceeds MAX_VALUE. Modifies the grid in place. 
+    Spreads the excess ionization values in the input grid to ensure that no cell exceeds MAX_VALUE. Modifies the grid in place.
     """
     # to later assert that the count was conserved
     initial_count = np.sum(input_grid)
@@ -119,8 +119,9 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
             futures.append(f)
             # logger.debug(f"Submitted process for excess region at index {idx}")
 
-        completed, uncompleted = wait(futures)
-        assert len(uncompleted) == 0, "Some processes did not complete successfully."
+        # even for very large grids, spreading should be quick so we set a timeout of 5 minutes
+        completed, uncompleted = wait(futures, timeout = 300)
+        assert len(uncompleted) == 0, f"{len(uncompleted)} processes did not complete successfully."
 
 
     input_grid[:] = updated_grid[:]
@@ -131,7 +132,8 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
     # Check if the redistribution was successful
     final_count = np.sum(input_grid)
     # assert np.isclose(final_count, initial_count), "Redistribution failed: initial and final counts do not match."
-    logger.debug(f"Initial count: {initial_count}, Final count: {final_count}")
+    deviation = (final_count - initial_count) / initial_count
+    logger.debug(f"Photon numbers: {initial_count=}, {final_count=} => {deviation=}")
 
 
 

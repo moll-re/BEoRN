@@ -74,13 +74,13 @@ class HaloCatalog:
             # -> minimal distance between the halos in the current snapshot and the previous snapshot means that it is likely the same halo
             # Compute pairwise distances only for close halos using broadcasting in chunks
             # We'll build a sparse matrix where only distances < fudge_factor * Lbox are stored
-            # -> minimal distance between the halos in the current snapshot and the previous snapshot means that it is likely the same halo 
+            # -> minimal distance between the halos in the current snapshot and the previous snapshot means that it is likely the same halo
             distances = np.linalg.norm(self.positions[:, None, :] - past_catalog.positions[None, :, :], axis=-1)
             # distances has shape (N, M)
 
             # find all the halos that lie within the fudge factor distance
             indices = np.where(distances < max_dist)
-            
+
             # Use numpy advanced indexing to directly update mass_past
             np.maximum.at(
                 mass_past[:, i],
@@ -131,7 +131,7 @@ class HaloCatalog:
 
     def to_mesh(self) -> np.ndarray:
         """
-        Converts the halo catalog to a 3D mesh of halo counts using nearest neighbor interpolation. Attention this representation does not take into account the halo masses. The returned quantity should be interpreted as number density! It is meant to be used when creating a map of halos that lie within a predefined mass bin. 
+        Converts the halo catalog to a 3D mesh of halo counts using nearest neighbor interpolation. Attention this representation does not take into account the halo masses. The returned quantity should be interpreted as number density! It is meant to be used when creating a map of halos that lie within a predefined mass bin.
 
         Returns
         -------
@@ -196,7 +196,8 @@ class HaloCatalog:
             catalog = np.ndarray((0, 4))
 
         return cls(
-            masses = catalog[:, 0],
+            # masses should be in Msun
+            masses = catalog[:, 0] * parameters.cosmology.h,
             # shift to center the box
             positions = catalog[:, 1:] + parameters.simulation.Lbox / 2,
             parameters = parameters,
