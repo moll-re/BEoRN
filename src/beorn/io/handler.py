@@ -17,7 +17,7 @@ class Handler:
     """
     logger = logging.getLogger(__name__)
 
-    def __init__(self, file_root: Path, clear: bool = False):
+    def __init__(self, file_root: Path, clear: bool = False, write_kwargs: dict = None):
         """
         Args:
             file_root (Path): The root directory for the persistence files. This directory will be created if it does not exist.
@@ -25,7 +25,8 @@ class Handler:
         """
         self.file_root = file_root
         self.file_root.mkdir(exist_ok = True)
-        self.logger.info(f"Using persistence directory at {self.file_root}")
+        self.logger.info(f"Using persistence directory at {self.file_root} and kwargs {write_kwargs}")
+        self.write_kwargs = write_kwargs if write_kwargs is not None else {}
         if clear:
             self.clear()
 
@@ -38,7 +39,7 @@ class Handler:
             obj (BaseStructDerived): The object to write.
             **kwargs: Additional keyword arguments that are converted to a string and appended to the file name.
         """
-        obj.write(directory=self.file_root, parameters=parameters, **kwargs)
+        obj.write(directory=self.file_root, parameters=parameters, **kwargs, **self.write_kwargs)
 
 
     def load_file(self, parameters: Parameters, cls: type[BaseStructDerived], **kwargs) -> BaseStructDerived:
@@ -49,7 +50,7 @@ class Handler:
             cls (BaseStructDerived): The class of the object to load.
             **kwargs: Additional keyword arguments that are converted to a string and appended to the file name.
         """
-        return cls.read(directory=self.file_root, parameters=parameters, **kwargs)
+        return cls.read(directory=self.file_root, parameters=parameters, **kwargs, **self.write_kwargs)
 
 
     def clear(self):

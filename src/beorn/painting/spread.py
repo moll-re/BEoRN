@@ -61,18 +61,19 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
     # to later assert that the count was conserved
     initial_count = np.sum(input_grid)
     if initial_count > np.prod(input_grid.shape) * MAX_VALUE:
-        logger.info("Grid is fully ionized, no need to redistribute.")
+        logger.info("Grid is fully ionized, skipping redistribution.")
         input_grid.fill(MAX_VALUE)
         return
 
     # Label the excess regions
     excess_mask = input_grid > MAX_VALUE
     labeled_regions, label_count = label(excess_mask)
-    logger.info("Found %d excess regions.", label_count)
 
     if label_count == 0:
-        logger.debug("No excess regions found, no need to redistribute.")
+        logger.debug("No excess regions found, skipping redistribution.")
         return
+
+    logger.info("Found %d excess regions.", label_count)
 
     labels = np.arange(1, label_count + 1)
     grid_shape = input_grid.shape
@@ -97,8 +98,7 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
         weights=(input_grid - MAX_VALUE).ravel(),
         minlength=label_count + 1
     )[1:]
-
-    logger.debug(f"{labels.shape=}, {excess_values.shape=} ({excess_values.min()=}, {excess_values.max()=})")#, {centers.shape=}")
+    # logger.debug(f"{labels.shape=}, {excess_values.shape=} ({excess_values.min()=}, {excess_values.max()=})")#, {centers.shape=}")
 
     # Parallelize the redistribution process
     with ProcessPoolExecutor(max_workers=parameters.simulation.cores) as executor:
@@ -133,7 +133,7 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
     final_count = np.sum(input_grid)
     # assert np.isclose(final_count, initial_count), "Redistribution failed: initial and final counts do not match."
     deviation = (final_count - initial_count) / initial_count
-    logger.debug(f"Photon numbers: {initial_count=}, {final_count=} => {deviation=}")
+    logger.debug(f"Photon numbers: {initial_count=:.2e}, {final_count=:.2e} => {deviation=:.2e}")
 
 
 
@@ -189,5 +189,3 @@ def process_excess_region(center: tuple[float, float, float], excess_value: floa
         input_grid[batch_x, batch_y, batch_z] += to_add
         distributed_value += np.sum(to_add)
         loop_index = batch_end
-
-    # logger.debug(f"Distributed {distributed_value:.2f} while excess value was {excess_value:.2f} at center {center}.")

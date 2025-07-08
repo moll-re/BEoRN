@@ -1,9 +1,10 @@
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
 
 from . import twentyone_cm_fast
 from . import pkdgrav
 from . import thesan
-
 from ..structs.halo_catalog import HaloCatalog
 from ..structs.parameters import Parameters
 
@@ -28,13 +29,16 @@ def load_halo_catalog(parameters: Parameters, redshift_index: int) -> HaloCatalo
     path = parameters.simulation.halo_catalogs[redshift_index]
 
     if parameters.simulation.input_type == "21cmFAST":
-        return twentyone_cm_fast.load_halo_catalog(path, parameters)
+        catalog = twentyone_cm_fast.load_halo_catalog(path, parameters)
     elif parameters.simulation.input_type == "pkdgrav":
-        return pkdgrav.load_halo_catalog(path, parameters)
+        catalog = pkdgrav.load_halo_catalog(path, parameters)
     elif parameters.simulation.input_type == "thesan":
-        return thesan.load_halo_catalog(path, redshift_index, parameters)
+        catalog = thesan.load_halo_catalog(path, redshift_index, parameters)
     else:
         raise ValueError(f"Unknown halo catalog type: {parameters.simulation.input_type}. Supported types are: 21cmFAST, pkdgrav, thesan.")
+
+    logger.debug(f"Loaded halo catalog from {path} with {catalog.size=}  (masses: [{catalog.masses.min():.2e}, {catalog.masses.max():.2e}] Msun)")
+    return catalog
 
 
 def load_density_field(parameters: Parameters, redshift_index: int) -> np.ndarray:
@@ -57,7 +61,8 @@ def load_density_field(parameters: Parameters, redshift_index: int) -> np.ndarra
     nGrid = parameters.simulation.Ncell
 
     if parameters.simulation.density_fields is None:
-        raise ValueError('No density fields provided.')
+        logger.warning('No density fields provided in parameters.simulation.density_fields. Returning an empty array.')
+        return np.zeros((nGrid, nGrid, nGrid))
 
     field_path = parameters.simulation.density_fields[redshift_index]
 

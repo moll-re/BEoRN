@@ -10,16 +10,12 @@ logger = logging.getLogger(__name__)
 
 from ..structs.halo_catalog import HaloCatalog
 from ..structs.parameters import Parameters
+from ..particle_mapping import pylians, nn_native
 from .alpha_fitting import vectorized_alpha_fit
 
 # TODO - remove hardcoded values!
 # from: https://thesan-project.com/thesan/thesan.html
 THESAN_PARTICLE_COUNT = 1050**3
-
-# this batch size can easily take up to 50 GB, so be careful
-PARTICLE_BATCH_SIZE = 1_000_000_000
-
-MAX_ALPHA_VALUE = 5
 
 def load_tree_cache(cache_file):
     with h5py.File(cache_file, "r") as f:
@@ -38,7 +34,7 @@ def get_halo_accretion_rate_from_tree(parameters: Parameters, current_index: int
     """
     cached_tree = parameters.simulation.halo_catalogs_thesan_tree
     redshift_range = get_lookback_range(parameters, current_index)
-    logger.debug(f"Lookback range is {redshift_range}")
+    logger.debug(f"Merger tree lookback range is [{redshift_range[0]:.2f} - {redshift_range[-1]:.2f}] ({redshift_range.size} snapshots)")
 
     tree_halo_ids, tree_snap_num, tree_mass, tree_main_progenitor = load_tree_cache(cached_tree)
 
@@ -55,20 +51,34 @@ def get_halo_accretion_rate_from_tree(parameters: Parameters, current_index: int
 
         # find the mass of these progenitors
         halo_mass_history[:, i] = tree_mass[progenitor_indices]
-        halo_mass_history[progenitor_indices < 0, i] = np.nan  # set negative indices to NaN
+        # halo_mass_history[progenitor_indices < 0, i] = np.nan  # set negative indices to NaN
 
         # now we can find the next progenitors
         current_halo_indices = progenitor_indices
 
+
+    halo_mass_history[halo_mass_history <= 0] = 1
+    logger.debug(f"Found {np.sum(np.isnan(halo_mass_history))} haloes where the mass is negative")
     logger.debug(f"Found {np.sum(np.any(halo_mass_history == 0, axis=1))} trees that stopped early")
 
     # redshift_range = redshifts[snapshot_index - MAX_LOOKBACK + 1:snapshot_index + 1]
     # redshift_range = np.flip(redshift_range)  # flip to match the order of halo_mass_history
     halo_alphas = vectorized_alpha_fit(parameters, redshift_range, halo_mass_history)
+    logger.debug(f"Fitting gave {np.sum(np.isnan(halo_alphas))} NaN values and {np.sum(np.isinf(halo_alphas))} inf values.")
 
 
-    # clip negative alphas to 0 - negative accretion has no meaning in beorn
-    halo_alphas = np.clip(halo_alphas, 0, MAX_ALPHA_VALUE)
+    # clip small values
+    # - negative accretion has no meaning in beorn
+    # - all values should lie in the "paintable" range
+    # clip large values to the maximum value
+    # note that the upper limit is above the paintable range, so we use the -2 index to make sure that the halos are painted
+    alpha_range = parameters.simulation.halo_mass_accretion_alpha
+    below = halo_alphas < alpha_range[0]
+    above = halo_alphas > alpha_range[-2]
+    halo_alphas[below] = alpha_range[0]
+    halo_alphas[above] = alpha_range[-2]
+    logger.debug(f"Corrected {np.sum(below)} alphas below {alpha_range[0]:.2f} and {np.sum(above)} alphas above {alpha_range[-2]:.2f}")
+
     return current_halo_ids, halo_alphas
 
 
@@ -78,8 +88,9 @@ def get_lookback_range(parameters: Parameters, current_index: int) -> np.ndarray
     # depending on the current redshift, the range of redshifts will be longer or shorter
     redshifts = parameters.solver.redshifts
     current_redshift = redshifts[current_index]
-    # TODO
-    lookback_index = max(0, current_index - 10)
+    # TODO - hardcoded for now:
+    mass_accretion_lookback = parameters.source.mass_accretion_lookback
+    lookback_index = max(0, current_index - mass_accretion_lookback)
 
     redshifts = redshifts[lookback_index:current_index + 1]
 
@@ -180,6 +191,8 @@ def load_halo_catalog(path: Path, redshift_index: int, parameters: Parameters) -
         alphas = full_alphas,
         parameters = parameters
     )
+
+    logger.debug(f"Catalog alphas: min={catalog.alphas.min():.2f}, max={catalog.alphas.max():.2f}, mean={catalog.alphas.mean():.2f}, std={catalog.alphas.std():.2f}")
     return catalog
 
 
@@ -204,22 +217,14 @@ def load_density_field(snapshot_path: Path, parameters: Parameters) -> np.ndarra
     # map them to a mesh that is LBox x LBox x LBox
     # Create a density mesh from the particle positions
     mesh_size = parameters.simulation.Ncell
-    box_size = parameters.simulation.Lbox
-    mesh = np.zeros((mesh_size, mesh_size, mesh_size))
-    scaling = float(mesh_size / box_size)
+    mesh = np.zeros((mesh_size, mesh_size, mesh_size), dtype=np.float32)
 
-    # Convert to physical coordinates and map to grid indices - but do it in batches to avoid memory issues
-    for start in range(0, THESAN_PARTICLE_COUNT, PARTICLE_BATCH_SIZE):
-        end = min(start + PARTICLE_BATCH_SIZE, THESAN_PARTICLE_COUNT)
-        batch_positions = particle_positions[start:end, :] * scaling * 1e-3 / parameters.cosmology.h
+    # convert the coordinates to Mpc/h
+    particle_positions *= 1e-3 / parameters.cosmology.h
 
-        # Clip to ensure indices are within bounds
-        x = np.clip(np.round(batch_positions[:, 0]).astype(int), 0, mesh_size - 1)
-        y = np.clip(np.round(batch_positions[:, 1]).astype(int), 0, mesh_size - 1)
-        z = np.clip(np.round(batch_positions[:, 2]).astype(int), 0, mesh_size - 1)
-
-        # Increment the mesh
-        np.add.at(mesh, (x, y, z), 1)
+    # nn_native.map_particles_to_mesh(mesh, parameters.simulation.Lbox, particle_positions)
+    mass_assignment = parameters.simulation.halo_catalogs_thesan_mass_assignment
+    pylians.map_particles_to_mesh(mesh, parameters.simulation.Lbox, particle_positions, mass_assignment=mass_assignment)
 
     # Normalize the mesh to get the density field
     delta_b = mesh / np.mean(mesh, dtype=np.float64) - 1

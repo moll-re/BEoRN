@@ -26,9 +26,7 @@ class GridDataMultiZ(BaseStruct):
         """
         path = self.get_file_path(directory, parameters, **kwargs)
         if path.exists():
-            logger.debug(f"File {path} already exists. Not overwriting.")
-            self._file_path = path
-            return path
+            raise FileExistsError(f"File {path} already exists. Use a different name or delete the existing file.")
         else:
             self.write(path)
             return path
@@ -52,8 +50,12 @@ class GridDataMultiZ(BaseStruct):
                     # Convert float to numpy array so that they can still be appended
                     value = np.array(value)
 
+                if isinstance(value, h5py.Dataset):
+                    # If the value is already a h5py.Dataset, we can directly append it
+                    value = value[:]
+
                 if not isinstance(value, np.ndarray):
-                    logger.debug(f"Skipping field {key} because type {type(value)} is not appendable.")
+                    logger.debug(f"Not appending {key} to {self._file_path.name} because type {type(value)} is not appendable.")
                     continue
 
                 if key not in hdf5_file:
@@ -75,11 +77,11 @@ class GridDataMultiZ(BaseStruct):
         """
         Compute the power spectrum of the given quantity over all redshifts.
         """
-        kbins = parameters.simulation.kbin
+        bin_number = parameters.simulation.kbins.size
         box_dims = parameters.simulation.Lbox
-        power_spectrum = np.zeros((len(self.z), parameters.simulation.kbin))
+        power_spectrum = np.zeros((self.z.size, bin_number))
         # self.z becomes available when the data is loaded
         for i, z in enumerate(self.z):
             delta_quantity = quantity[i, ...] / np.mean(quantity[i, ...]) - 1
-            power_spectrum[i, ...], bins = t2c.power_spectrum.power_spectrum_1d(delta_quantity, box_dims=box_dims, kbins=kbins)
+            power_spectrum[i, ...], bins = t2c.power_spectrum.power_spectrum_1d(delta_quantity, box_dims=box_dims, kbins=bin_number)
         return power_spectrum, bins

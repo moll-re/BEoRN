@@ -9,7 +9,7 @@ import hashlib
 from dataclasses import dataclass, field, is_dataclass, fields
 from typing import Literal, Union
 import numpy as np
-
+import yaml
 from .helpers import bin_centers
 
 
@@ -80,7 +80,7 @@ class SourceParameters:
     min_xHII_value: int = 0
     """Lower limit for the ionization fraction. All pixels with xHII < min_xHII_value will be set to this value."""
 
-    mass_accretion_lookback: int = 0
+    mass_accretion_lookback: int = 5
 
 @dataclass(slots = True)
 class SolverParameters:
@@ -122,7 +122,7 @@ class SimulationParameters:
     Ncell: int = 128
     """Number of pixels of the final grid. This is the number of pixels in each dimension. The total number of pixels will be Ncell^3."""
 
-    Lbox: int = 100
+    Lbox: float = 100
     """Box length, in [Mpc/h]. This is the length of the box in each dimension. The total volume will be Lbox^3."""
 
     halo_catalogs: list[Path] = None
@@ -139,15 +139,6 @@ class SimulationParameters:
 
     cores: int = 1
     """Number of cores used in parallelization. The computation for each redshift can be parallelized with a shared memory approach. This is the number of cores used for this. Keeping the number at 1 disables parallelization."""
-
-    # TODO rename these
-    # TODO are these even used?
-    kmin: float = 3e-2
-    """Minimum value of the k binning used for the power spectrum"""
-    kmax: float = 4
-    """Maximum value of the k binning used for the power spectrum"""
-    kbin: int = 30
-    """Number of k bins used for the power spectrum."""
 
     spreading_pixel_threshold: int = None
     """When spreading the excess ionization fraction, treat all the connected regions with less than "thresh_pixel" as a single connected region (to speed up). If set to None, a default nonzero value will be used"""
@@ -185,11 +176,27 @@ class SimulationParameters:
 
     @property
     def kbins(self) -> np.ndarray:
-        return np.logspace(np.log10(self.kmin), np.log10(self.kmax), self.kbin, base=10)
+        """
+        Returns the k bins for the power spectrum. The bins are logarithmically spaced between k_min and k_max.
+        The number of bins is determined by the size of the simulation box and the number of cells.
+        """
+        k_min = 1 / self.Lbox
+        k_max = self.Ncell / self.Lbox
+        # TODO - explain the factor of 6
+        bin_count = int(6 * np.log10(k_max / k_min))
+
+        return np.logspace(np.log10(k_min), np.log10(k_max), bin_count, base=10)
 
 
     halo_catalogs_thesan_tree: Path = None
     halo_catalogs_thesan_offsets: Path = None
+    halo_catalogs_thesan_mass_assignment: Literal['NGP', 'CIC'] = 'CIC'
+    """Method used to assign the halo mass to the grid. Can be either NGP (Nearest Grid Point) or CIC (Cloud In Cell)."""
+
+    def __post_init__(self):
+        # ensure the the np.ndarray fields are numpy arrays
+        if isinstance(self.halo_mass_accretion_alpha, list):
+            self.halo_mass_accretion_alpha = np.array(self.halo_mass_accretion_alpha)
 
 @dataclass(slots = True)
 class CosmologyParameters:
@@ -308,6 +315,34 @@ class Parameters:
             else:
                 hash_list.append(make_hashable(value))
         return hashlib.md5(str(hash_list).encode()).hexdigest()
+
+
+    @classmethod
+    def from_dict(cls, params_dict: dict) -> 'Parameters':
+        """
+        Create a Parameters object from a dictionary. This is useful for loading parameters from a file.
+        """
+        params = cls()
+        for key, value in params_dict.items():
+            if type(value) is dict and hasattr(params, key):
+                # Dynamically get the class from the field type annotation
+                field_type = type(getattr(params, key))
+                # the subparameter is a dataclass, so we can instantiate it with the dict
+                child = field_type(**value)
+                setattr(params, key, child)
+            else:
+                raise ValueError(f"Unknown parameter {key} with value {value}. Please check the parameters dictionary.")
+        return params
+
+
+    @classmethod
+    def from_yaml(cls, yaml_path: Path) -> 'Parameters':
+        """
+        Create a Parameters object from a YAML file.
+        """
+        with yaml_path.open('r') as file:
+            params_dict = yaml.safe_load(file)
+        return cls.from_dict(params_dict)
 
 
 

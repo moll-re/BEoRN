@@ -9,6 +9,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from astropy.convolution import convolve_fft
+from tqdm.auto import tqdm
+
 
 from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel
 from ..cosmo import T_adiab_fluctu, dTb_factor, dTb_fct
@@ -27,6 +29,12 @@ CONVOLVE_FFT_KWARGS = {
     "boundary": "wrap",
     "normalize_kernel": False,
     "allow_huge": True
+}
+
+
+TQDM_KWARGS = {
+    "desc": "Painting redshift snapshots",
+    "unit": "snapshot",
 }
 
 
@@ -55,19 +63,22 @@ class Painter:
         multi_z_data = GridDataMultiZ()
         multi_z_data.create(self.parameters, self.output_handler.file_root)
 
-        self.logger.info(f"Painting profiles onto grid for {radiation_profiles.z_history.size} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
+        snapshot_count = radiation_profiles.z_history.size
+        self.logger.info(f"Painting profiles onto grid for {snapshot_count} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
         # TODO - this loop could be parallelized using MPI
-        for ii, z in enumerate(radiation_profiles.z_history):
+
+        for loop_index in tqdm(range(snapshot_count), **TQDM_KWARGS):
+            z = radiation_profiles.z_history[loop_index]
             try:
                 GridData.read(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
-                self.logger.info(f"Found painted output in cache for {z=}. Skipping.")
+                self.logger.info(f"Found painted output in cache for {z=:.2f}. Skipping.")
                 continue
             except FileNotFoundError:
                 self.logger.debug("Painted output not found in cache. Processing now")
 
             # there is no cache or the cache does not contain the halo catalog - compute it fresh
             z_index = np.argmin(np.abs(radiation_profiles.z_history - z))
-            grid_data = self.paint_single(z_index=z_index, grid_model=radiation_profiles, loop_index=ii)
+            grid_data = self.paint_single(z_index=z_index, grid_model=radiation_profiles, loop_index=loop_index)
 
             if self.cache_handler:
                 self.cache_handler.write_file(self.parameters, grid_data, z=z)
@@ -95,7 +106,9 @@ class Painter:
         zgrid = grid_model.z_history[z_index]
         mass_range = grid_model.halo_mass_bins[..., z_index]
 
-        # TODO - what exactly is coef
+        self.logger.debug(f"Got {mass_range.size} profiles spanning {mass_range.min():.2e} - {mass_range.max():.2e} Msun.")
+
+        # TODO - describe the relevance of coef
         coef = constants.rhoc0 * self.parameters.cosmology.h ** 2 * self.parameters.cosmology.Ob * (1 + zgrid) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
 
 
@@ -235,7 +248,7 @@ class Painter:
             # assert total_halos == halo_catalog.M.size, f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.M.size}. This is a bug."
             self.logger.warning(f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.size}. This is a bug.")
 
-        # clean up the shared memory buffers - but keep the data in the buffer
+        # clean up the shared memory buffers - but keep the data that was in the buffers
         if buffer_xHII:
             array = np.ndarray(zero_grid.shape, dtype=np.float64, buffer=buffer_xHII.buf)
             Grid_xHII = array.copy()
@@ -330,8 +343,6 @@ class Painter:
         )
 
 
-
-
     def paint_single_mass_bin(
         self,
         halo_catalog: HaloCatalog,
@@ -385,7 +396,6 @@ class Painter:
             self.paint_temperature_profile(
                 output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, z, truncate, halo_grid
             )
-
 
 
     def paint_ionization_profile(
@@ -457,7 +467,6 @@ class Painter:
                 **CONVOLVE_FFT_KWARGS
             ) * renorm * np.sum(kernel_xal) / 1e-7
             # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
-
 
 
     def paint_temperature_profile(
