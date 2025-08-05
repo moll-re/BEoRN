@@ -32,11 +32,13 @@ class HaloCatalog:
         assert self.positions.shape[0] == self.masses.size, "Halo catalog arrays must have the same length."
 
         if self.alphas is None:
+            logger.info("No alpha values provided, using default value of 0.79 for all halos.")
             self.alphas = np.ones(self.masses.size) * 0.79
 
         # filter out haloes that are considerd non-star forming
         condition_min = self.masses > self.parameters.source.halo_mass_min
         condition_max = self.masses < self.parameters.source.halo_mass_max
+        # logger.debug(f"Removing {np.sum(~(condition_min & condition_max))} halos that are outside the parameter mass range")
         self.positions = self.positions[condition_min & condition_max, :]
         self.masses = self.masses[condition_min & condition_max]
         self.alphas = self.alphas[condition_min & condition_max]
@@ -71,10 +73,7 @@ class HaloCatalog:
         # in this case where returns two arrays, we only want the first one
 
         # if indices_match.size != 0:
-        #     logger.debug(
-        #         "alpha_range=(%.2f, %.2f), mass_range=(%.2e, %.2e) -> %d matches",
-        #         alpha_inf, alpha_sup, mass_inf, mass_sup, len(indices_match)
-        #     )
+        #     logger.debug(f"{alpha_range=} and {mass_range=} resulted in matches: {indices_match}")
         return indices_match
 
 
@@ -90,7 +89,7 @@ class HaloCatalog:
         physical_size = self.parameters.simulation.Lbox
         grid_size = self.parameters.simulation.Ncell
         mesh = np.zeros((grid_size, grid_size, grid_size), dtype=np.float32)
-        map_particles_to_mesh(mesh, physical_size, self.positions.astype(np.float32))
+        map_particles_to_mesh(mesh, physical_size, self.positions.astype(np.float32), "NGP")
         return mesh
 
 

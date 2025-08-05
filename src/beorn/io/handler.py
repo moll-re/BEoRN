@@ -60,3 +60,18 @@ class Handler:
         self.logger.info(f"Clearing persistence directory at {self.file_root}")
         shutil.rmtree(self.file_root)
         self.file_root.mkdir()
+
+
+    def save_logs(self, parameters: Parameters) -> None:
+        """
+        Registers as a logging handler to save logs to a file in the currently configured file root.
+        """
+        log_file = f"logs_{parameters.unique_hash()}.log"
+        log_path = self.file_root / log_file
+
+        # add a file handler to the global logging config
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(levelname)s - %(filename)s - %(message)s', datefmt='%H:%M:%S')
+        )
+        logging.getLogger().addHandler(file_handler)

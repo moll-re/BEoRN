@@ -2,7 +2,6 @@
 import time
 from datetime import timedelta
 import logging
-from itertools import product
 from multiprocessing import shared_memory
 from concurrent.futures import ProcessPoolExecutor, wait
 import numpy as np
@@ -13,9 +12,8 @@ from tqdm.auto import tqdm
 
 
 from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel
-from ..cosmo import T_adiab_fluctu, dTb_factor, dTb_fct
-from .. import constants
-from ..couplings import x_coll, S_alpha
+from ..cosmo import T_adiab_fluctu
+from ..couplings import S_alpha
 from ..io.handler import Handler
 from ..structs.radiation_profiles import RadiationProfiles
 from ..structs.parameters import Parameters
@@ -23,6 +21,8 @@ from ..structs.snapshot_profiles import GridData
 from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
 from .spread import spread_excess_ionization
+from .spread_old  import spreading_excess_fast
+
 from ..load_input_data.load import load_halo_catalog, load_density_field
 
 CONVOLVE_FFT_KWARGS = {
@@ -59,29 +59,34 @@ class Painter:
 
 
     def paint_full(self, radiation_profiles: RadiationProfiles) -> GridDataMultiZ:
-        """Starts the painting process for the full redshift range."""
-        multi_z_data = GridDataMultiZ()
-        multi_z_data.create(self.parameters, self.output_handler.file_root)
+        """
+        Starts the painting process for the full redshift range and saves the output to a file. If self.cache_handler is set, all intermediate computations are cached to speed up the process.
+        Args:
+            radiation_profiles (RadiationProfiles): The radiation profiles object containing the precomputed 1D profiles for each redshift snapshot.
+
+        Returns:
+            GridDataMultiZ: The multi-redshift grid data containing the painted 3D maps for each redshift snapshot.
+        """
+        multi_z_data = GridDataMultiZ(parameters=self.parameters)
+        multi_z_data.create(self.output_handler.file_root, **self.output_handler.write_kwargs)
 
         snapshot_count = radiation_profiles.z_history.size
         self.logger.info(f"Painting profiles onto grid for {snapshot_count} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
         # TODO - this loop could be parallelized using MPI
 
         for loop_index in tqdm(range(snapshot_count), **TQDM_KWARGS):
-            z = radiation_profiles.z_history[loop_index]
             try:
-                GridData.read(directory=self.cache_handler.file_root, parameters=self.parameters, z=z)
-                self.logger.info(f"Found painted output in cache for {z=:.2f}. Skipping.")
-                continue
+                grid_data = self.cache_handler.load_file(self.parameters, GridData, z_index=loop_index)
+                self.logger.info(f"Found painted output in cache for {loop_index=}. Skipping.")
+
             except FileNotFoundError:
+                # there is no cache or the cache does not contain the halo catalog - compute it fresh
                 self.logger.debug("Painted output not found in cache. Processing now")
 
-            # there is no cache or the cache does not contain the halo catalog - compute it fresh
-            z_index = np.argmin(np.abs(radiation_profiles.z_history - z))
-            grid_data = self.paint_single(z_index=z_index, grid_model=radiation_profiles, loop_index=loop_index)
+                grid_data = self.paint_single(z_index=loop_index, grid_model=radiation_profiles, loop_index=loop_index)
 
-            if self.cache_handler:
-                self.cache_handler.write_file(self.parameters, grid_data, z=z)
+                if self.cache_handler:
+                    self.cache_handler.write_file(self.parameters, grid_data, z_index=loop_index)
 
             # write the painted output to the file (append mode)
             multi_z_data.append(grid_data)
@@ -106,10 +111,16 @@ class Painter:
         zgrid = grid_model.z_history[z_index]
         mass_range = grid_model.halo_mass_bins[..., z_index]
 
-        self.logger.debug(f"Got {mass_range.size} profiles spanning {mass_range.min():.2e} - {mass_range.max():.2e} Msun.")
+        # log some information about the current "paintable range"
+        alphas = self.parameters.simulation.halo_mass_accretion_alpha
+        self.logger.debug(
+            f"Got {mass_range.shape[0]}x{mass_range.shape[1]} profiles. Range: "
+            f"alpha={alphas[0]:.2f} [{mass_range[...,0].min():.2e} - {mass_range[..., 0].max():.2e} Msun] and "
+            f"alpha={alphas[-1]:.2f} [{mass_range[...,-1].min():.2e} - {mass_range[..., -1].max():.2e} Msun]."
+        )
 
-        # TODO - describe the relevance of coef
-        coef = constants.rhoc0 * self.parameters.cosmology.h ** 2 * self.parameters.cosmology.Ob * (1 + zgrid) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
+        # # TODO - describe the relevance of coef
+        # coef = constants.rhoc0 * self.parameters.cosmology.h ** 2 * self.parameters.cosmology.Ob * (1 + zgrid) ** 3 * constants.M_sun / constants.cm_per_Mpc ** 3 / constants.m_H
 
 
         # since we want to paint the halo profiles in grouped mass bins, we need to know which halos are in which mass bin
@@ -121,37 +132,6 @@ class Painter:
             raise RuntimeError(f"The current halo catalog at z={zgrid} has a higher masse range ({halo_catalog.masses.max():.2e} - {halo_catalog.masses.min():.2e}) than the mass range of the precomputed profiles ({mass_range.max():.2e} - {mass_range.min():.2e}). You need to adjust your parameters: either increase the mass range of the profile simulation (parameters.simulation) or decrease the mass range of star forming halos (parameters.source).")
 
         self.logger.info(f'Painting {halo_catalog.size} halos at {zgrid=:.2f} ({z_index=:.0f}).')
-
-        # Shortcut if there are no halos
-        if halo_catalog.size == 0:
-            self.logger.debug("No halos to paint. Returning empty grid.")
-            factor = dTb_factor(self.parameters)
-
-            Grid_Temp = T_adiab_fluctu(zgrid, self.parameters, delta_b)
-            Grid_xHII = zero_grid
-
-            Grid_xal = zero_grid
-            Grid_xcoll = x_coll(z=zgrid, Tk=Grid_Temp, xHI=(1 - Grid_xHII), rho_b=(delta_b + 1) * coef)
-            Grid_dTb = factor * np.sqrt(1 + zgrid) * (1 - constants.Tcmb0 * (1 + zgrid) / Grid_Temp) * (1 - Grid_xHII) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
-            Grid_dTb_no_reio = factor * np.sqrt(1 + zgrid) * (1 - constants.Tcmb0 * (1 + zgrid) / Grid_Temp) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
-            Grid_dTb_RSD = zero_grid
-            Grid_dTb_T_sat = factor * np.sqrt(1 + zgrid) * (1 - Grid_xHII) * (delta_b + 1) * Grid_xcoll / (1 + Grid_xcoll)
-            xcoll_mean = np.mean(Grid_xcoll)
-
-            return GridData(
-                z = zgrid,
-                delta_b = delta_b,
-                Grid_Temp = Grid_Temp,
-                Grid_dTb = Grid_dTb,
-                Grid_dTb_no_reio = Grid_dTb_no_reio,
-                Grid_dTb_T_sat = Grid_dTb_T_sat,
-                Grid_dTb_RSD = Grid_dTb_RSD,
-                Grid_xHII = Grid_xHII,
-                Grid_xal = Grid_xal,
-                # TODO - what value for xtot?
-                Grid_xtot = Grid_xcoll,
-            )
-
 
         # initialise the "main" grids here. Since they will be filled in place by multiple parallel processes, we need to use shared memory
         # get the size of the grids
@@ -190,63 +170,62 @@ class Painter:
             self.logger.debug(f"Using {self.parameters.simulation.cores} processes for painting.")
             start_time = time.time()
 
-            for alpha_index, mass_index in product(alpha_indices, mass_indices):
+            for alpha_index in alpha_indices:
                 # the alpha range is simply defined by the parameters
                 loop_alpha_range = [
                     self.parameters.simulation.halo_mass_accretion_alpha[alpha_index],
                     self.parameters.simulation.halo_mass_accretion_alpha[alpha_index + 1]
                 ]
-                # the mass range shifts with the redshift so we need to take the mass range for the current redshift and take the bins from there
-                loop_mass_range = [
-                    mass_range[mass_index, alpha_index],
-                    mass_range[mass_index + 1, alpha_index]
-                ]
-                halo_indices = halo_catalog.get_halo_indices(loop_alpha_range, loop_mass_range)
-                total_halos += halo_indices.size
+                for mass_index in mass_indices:
 
-                # yet another shortcut: don't copy any memory if there are no halos to begin with
-                if halo_indices.size == 0:
-                    continue
+                    # the mass range shifts with the redshift so we need to take the mass range for the current redshift and take the bins from there
+                    loop_mass_range = [
+                        mass_range[mass_index, alpha_index],
+                        mass_range[mass_index + 1, alpha_index]
+                    ]
+                    halo_indices = halo_catalog.get_halo_indices(loop_alpha_range, loop_mass_range)
+                    # shortcut: don't copy any memory if there are no halos to begin with
+                    if halo_indices.size == 0:
+                        continue
 
-                # since the profiles are are large and copied in the multiprocessing approach, we only pass the relevant slices
-                # profiles_of_bin = grid_model.profiles_of_halo_bin(z_index, alpha_index, mass_index)
+                    total_halos += halo_indices.size
 
-                profiles_of_bin = (
-                    grid_model.R_bubble[mass_index, alpha_index, z_index],
-                    grid_model.rho_alpha[:, mass_index, alpha_index, z_index],
-                    grid_model.rho_heat[:, mass_index, alpha_index, z_index],
-                )
-
-                radial_grid = grid_model.r_grid_cell[:] / (1 + zgrid)  # pMpc/h
-                kwargs = {
-                    "halo_catalog": halo_catalog.at_indices(halo_indices),
-                    "z": zgrid,
-                    # profiles related quantities
-                    "radial_grid": radial_grid,
-                    "r_lyal": grid_model.r_lyal[:],
-                    "profiles_of_bin": profiles_of_bin,
-                    # shared memory buffers
-                    "buffer_lyal": buffer_xal,
-                    "buffer_temp": buffer_Temp,
-                    "buffer_xHII": buffer_xHII
-                }
-
-                if self.parameters.simulation.cores > 1:
-                    # use the multiprocessing approach and submit the task to the executor
-                    f = executor.submit(
-                        self.paint_single_mass_bin,
-                        **kwargs
+                    # since the profiles are large and copied in the multiprocessing approach, we only pass the relevant slice
+                    profiles_of_bin = (
+                        grid_model.R_bubble[mass_index, alpha_index, z_index],
+                        grid_model.rho_alpha[:, mass_index, alpha_index, z_index],
+                        grid_model.rho_heat[:, mass_index, alpha_index, z_index],
                     )
-                    futures.append(f)
-                else:
-                    # use the single process approach and call the function directly
-                    self.paint_single_mass_bin(**kwargs)
+
+                    radial_grid = grid_model.r_grid_cell[:] / (1 + zgrid)  # pMpc/h
+                    kwargs = {
+                        "halo_catalog": halo_catalog.at_indices(halo_indices),
+                        "z": zgrid,
+                        # profiles related quantities
+                        "radial_grid": radial_grid,
+                        "r_lyal": grid_model.r_lyal[:],
+                        "profiles_of_bin": profiles_of_bin,
+                        # shared memory buffers
+                        "buffer_lyal": buffer_xal,
+                        "buffer_temp": buffer_Temp,
+                        "buffer_xHII": buffer_xHII
+                    }
+
+                    if self.parameters.simulation.cores > 1:
+                        # use the multiprocessing approach and submit the task to the executor
+                        f = executor.submit(
+                            self.paint_single_mass_bin,
+                            **kwargs
+                        )
+                        futures.append(f)
+                    else:
+                        # use the single process approach and call the function directly
+                        self.paint_single_mass_bin(**kwargs)
 
             # wait for all futures to complete
             completed, uncompleted = wait(futures)
             assert len(uncompleted) == 0, "Not all painting subprocesses completed successfully"
-            # assert total_halos == halo_catalog.M.size, f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.M.size}. This is a bug."
-            self.logger.warning(f"Total painted halos {total_halos} do not match the halo catalog size {halo_catalog.size}. This is a bug.")
+            assert total_halos == halo_catalog.size, f"Number of painted halos ({total_halos}) does not match the halo catalog size ({halo_catalog.size})."
 
         # clean up the shared memory buffers - but keep the data that was in the buffers
         if buffer_xHII:
@@ -276,6 +255,8 @@ class Painter:
         ## Excess spreading
         start_time = time.time()
         spread_excess_ionization(self.parameters, Grid_xHII)
+        # Grid_xHII = spreading_excess_fast(self.parameters, Grid_xHII)
+
         self.logger.info(f'Redistributing excess photons from the overlapping regions took {timedelta(seconds=time.time() - start_time)}.')
 
         ## Post processing of the already filled grids
@@ -296,16 +277,6 @@ class Painter:
             self.logger.debug('NOT including Salpha fluctuations in dTb')
             Grid_xal *= S_alpha(zgrid, np.mean(Grid_Temp), 1 - np.mean(Grid_xHII)) / (4 * np.pi)
 
-        if self.parameters.simulation.compute_x_coll_fluctuations:
-            self.logger.debug('Including xcoll fluctuations in dTb')
-            Grid_xcoll = x_coll(z = zgrid, Tk = Grid_Temp, xHI = (1 - Grid_xHII), rho_b = (delta_b + 1) * coef)
-            xcoll_mean = np.mean(Grid_xcoll)
-            Grid_xtot = Grid_xcoll + Grid_xal
-        else:
-            self.logger.debug('NOT including xcoll fluctuations in dTb')
-            xcoll_mean = x_coll(z = zgrid, Tk = np.mean(Grid_Temp), xHI = (1 - np.mean(Grid_xHII)), rho_b = coef)
-            Grid_xtot = Grid_xal + xcoll_mean
-
 
         # if Rsmoothing > 0:
         #     self.logger.info(f'Smoothing the fields with {Rsmoothing=}')
@@ -316,30 +287,16 @@ class Painter:
         #     # TODO - why are the other fields not smoothed?
 
 
-        if "dTb" in self.parameters.simulation.store_grids:
-            Grid_dTb = dTb_fct(z=zgrid, Tk=Grid_Temp, xtot=Grid_xtot, delta_b=delta_b, x_HII=Grid_xHII, parameters=self.parameters)
-            Grid_dTb_no_reio = dTb_fct(z=zgrid, Tk=Grid_Temp, xtot=Grid_xtot, delta_b=delta_b, x_HII=np.array([0]), parameters=self.parameters)
-            Grid_dTb_T_sat = dTb_fct(z=zgrid, Tk=1e50, xtot = 1e50, delta_b=delta_b, x_HII=Grid_xHII, parameters=self.parameters)
-        else:
-            Grid_dTb = zero_grid
-            Grid_dTb_no_reio = zero_grid
-            Grid_dTb_T_sat = zero_grid
-
         self.logger.info(f'Postprocessing of the grids took {timedelta(seconds=time.time() - start_time)}.')
         self.logger.info(f'Current snapshot took {timedelta(seconds=time.time() - iteration_start_time)}.')
 
         return GridData(
+            parameters = self.parameters,
             z = zgrid,
             delta_b = delta_b,
             Grid_Temp = Grid_Temp,
-            Grid_dTb = Grid_dTb,
-            Grid_dTb_no_reio = Grid_dTb_no_reio,
-            Grid_dTb_T_sat = Grid_dTb_T_sat,
-            Grid_dTb_RSD = zero_grid,
             Grid_xHII = Grid_xHII,
             Grid_xal = Grid_xal,
-            Grid_xtot = zero_grid,
-            # Grid_xtot = Grid_xtot,
         )
 
 
@@ -415,6 +372,8 @@ class Painter:
             fill_value = (1, 0)
         )
         kernel_xHII = profile_to_3Dkernel(profile_xHII, nGrid, LBox)
+        # self.logger.debug(f"kernel_xHII has {np.sum(np.isnan(kernel_xHII))} NaN values")
+
         if not np.any(kernel_xHII > 0):
             ### if the bubble volume is smaller than the grid size,we paint central cell with ion fraction value
             # kernel_xHII[int(nGrid / 2), int(nGrid / 2), int(nGrid / 2)] = np.trapz(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3
@@ -458,6 +417,8 @@ class Painter:
             nGrid_min = self.parameters.simulation.minimum_grid_size_lyal
         )
 
+        # self.logger.debug(f"kernel_xal has {np.sum(np.isnan(kernel_xal))} NaN values")
+
         if np.any(kernel_xal > 0):
             renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
 
@@ -493,6 +454,7 @@ class Painter:
             nGrid,
             nGrid_min = self.parameters.simulation.minimum_grid_size_heat
         )
+        # self.logger.debug(f"kernel_T has {np.sum(np.isnan(kernel_T))} NaN values")
 
         if np.any(kernel_T > 0):
             renorm = trapezoid(Temp_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_T)

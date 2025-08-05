@@ -37,7 +37,7 @@ def load_halo_catalog(parameters: Parameters, redshift_index: int) -> HaloCatalo
     else:
         raise ValueError(f"Unknown halo catalog type: {parameters.simulation.input_type}. Supported types are: 21cmFAST, pkdgrav, thesan.")
 
-    logger.debug(f"Loaded halo catalog from {path} with {catalog.size=}  (masses: [{catalog.masses.min():.2e}, {catalog.masses.max():.2e}] Msun)")
+    logger.debug(f"Loaded halo catalog from {path} with {catalog.size=}  (masses: [{catalog.masses.min(initial=0):.2e}, {catalog.masses.max(initial=0):.2e}] Msun)")
     return catalog
 
 

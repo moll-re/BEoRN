@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from ..structs.parameters import Parameters
 
 
+
 def profile_to_3Dkernel(profile: callable, nGrid: np.ndarray, LB: int) -> np.ndarray:
     """
     Put profile_1D on a grid
@@ -59,7 +60,7 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray, sho
 
     if parameters.simulation.spreading_pixel_threshold is None:
         # TODO - what are these values???
-        nGrid = input_grid.shape[0] 
+        nGrid = input_grid.shape[0]
         pix_thresh = 80 * (nGrid / 256) ** 3
     else:
         pix_thresh = parameters.simulation.spreading_pixel_threshold
@@ -124,8 +125,8 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray, sho
                 connected_indices = np.where(label_image == l)
                 f = executor.submit(spread_excess_ionization_single_region, parameters, buffer, connected_indices)
                 futures.append(f)
-            
-            
+
+
             completed, uncompleted = wait(futures)
             assert len(uncompleted) == 0, "Not all spreading subprocesses completed successfully"
 
@@ -177,7 +178,7 @@ def spread_excess_ionization_single_region(parameters: Parameters, Grid: np.ndar
         # If the excess is too small, just return the grid
         # TODO - does this really improve the performance?
         return Grid
-    
+
     ## take sub grid with only the connected region, find pixels where xion>1, sum the excess, and set these pixels to 1.
     Inverted_grid = np.full(((nGrid, nGrid, nGrid)), 1)
     Inverted_grid[connected_indices] = 0

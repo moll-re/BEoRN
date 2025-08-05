@@ -58,6 +58,8 @@ def x_coll(z, Tk, xHI, rho_b):
     # prefac (Eq.10 in arXiv:1109.6012)
     Tcmb = T_cmb(z)
     prefac = Tstar / A10 / Tcmb  # [s]
+    if prefac.size != 1:
+        prefac = prefac[:, np.newaxis, np.newaxis, np.newaxis]
 
     HH, eH = kappa_coll()
     kappa_eH_tck = splrep(eH['T'], eH['kappa'])

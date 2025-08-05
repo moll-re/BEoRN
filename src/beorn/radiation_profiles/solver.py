@@ -82,7 +82,7 @@ class ProfileSolver:
             zz_, sfrd_ = global_qty.compute_sfrd(self.parameters, self.z_bins, halo_mass, halo_mass_derivative)
             sfrd = np.interp(self.z_bins, zz_, sfrd_, right=0)
             Gamma_ion, Gamma_sec_ion = mean_gamma_ion_xray(self.parameters, sfrd, self.z_bins)
-            
+
             x_e = solve_xe(self.parameters, Gamma_ion, Gamma_sec_ion, self.z_bins)
             logger.info('param.solver.fXh is not set to constant. We will compute the free e- fraction x_e and assume fXh = x_e**0.225.')
 
@@ -102,6 +102,7 @@ class ProfileSolver:
         # TODO assert correct shapes here!
 
         return RadiationProfiles(
+            parameters = self.parameters,
             z_history = self.z_bins,
             halo_mass_bins = halo_mass_bins,
             rho_xray = rho_xray,
@@ -150,7 +151,7 @@ class ProfileSolver:
             volume = volume.reshape(photon_number.shape)
             return km_per_Mpc / (hubble(z, self.parameters) * a) * (photon_number / comoving_baryon_number_density - alpha_HII(1e4) * C / cm_per_Mpc ** 3 * h0 ** 3 * baryon_number * volume).flatten()  # eq 65 from barkana and loeb
 
-        volume_shape = (self.parameters.simulation.halo_mass_bin_n - 1, len(self.parameters.simulation.halo_mass_accretion_alpha) - 1)    # the time dependence will be given by the redshift 
+        volume_shape = (self.parameters.simulation.halo_mass_bin_n - 1, len(self.parameters.simulation.halo_mass_accretion_alpha) - 1)    # the time dependence will be given by the redshift
         v0 = np.zeros(volume_shape)
         sol = solve_ivp(volume_derivative, [aa[0], aa[-1]], v0.flatten(), t_eval=aa)
         bubble_volume = sol.y
@@ -221,7 +222,7 @@ class ProfileSolver:
             # it only makes sense to compute the profile for z < zstar
             if z > z_star:
                 continue
-            
+
             # lookback redshift
             z_prime = np.logspace(np.log(z), np.log(z_star), N_prime[i], base=np.e)
             rcom_prime = comoving_distance(z_prime, self.parameters) * h0  # comoving distance
@@ -276,7 +277,7 @@ class ProfileSolver:
                 # the final integrand is a function of the frequency and the radial distance
                 prefactor = ((nH0 / nb0) * sigma_HI(nu_val * h_eV_sec) * (nu_val * h_eV_sec - E_HI) + (nHe0 / nb0) * sigma_HeI(nu_val * h_eV_sec) * (nu_val * h_eV_sec - E_HeI))   # [cm^2 * eV] 4 * np.pi *
                 return prefactor[:, None, None, None] * integral_factors_r
-            
+
             integrated_flux = trapezoid(integrand(nu), nu, axis=0)
             heat = integrated_flux
             fXh = f_Xh(self.parameters, xe[i])

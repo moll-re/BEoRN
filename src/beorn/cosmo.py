@@ -180,6 +180,8 @@ def dTb_fct(z, Tk, xtot, delta_b,x_HII, parameters: Parameters):
     Returns : Birghtness Temperature in mK.
     """
     factor = dTb_factor(parameters)
+    if z.size != 1:
+        z = z[:, np.newaxis, np.newaxis, np.newaxis]
     return factor * np.sqrt(1 + z) * (1 - Tcmb0 * (1 + z) / Tk) * (1 - x_HII) * xtot / (1 + xtot) * (1+delta_b)
 
 def dTb_factor(parameters: Parameters):

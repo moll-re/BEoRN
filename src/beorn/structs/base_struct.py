@@ -1,11 +1,12 @@
 """Base data structure for derived data classes containing data required at different stages of the simulation."""
 from pathlib import Path
 from abc import ABC
-from dataclasses import dataclass, is_dataclass, asdict, fields
+from dataclasses import dataclass, fields
 import h5py
+import numpy as np
 import logging
 logger = logging.getLogger(__name__)
-from .parameters import Parameters
+from .parameters import Parameters, to_dict
 
 
 # kw_only allows use to specify an optional field even though subclasses have required fields
@@ -13,10 +14,12 @@ from .parameters import Parameters
 class BaseStruct(ABC):
     """
     Base class for derived data classes containing data required at different stages of the simulation.
-    The implementation is such that "loading" this object creates attributes but keeps the actual data on on the disk to be loaded on demand. 
+    The implementation is such that "loading" this object creates attributes but keeps the actual data on on the disk to be loaded on demand.
     """
 
     _file_path: Path = None
+
+    parameters: Parameters = None
 
     @classmethod
     def get_file_path(cls, directory: Path, parameters: Parameters, **kwargs) -> str:
@@ -37,8 +40,15 @@ class BaseStruct(ABC):
             # Do not use a context manager here, because we want to keep the file open
             hdf5_file = h5py.File(self._file_path, 'r')
             for dataset_name in hdf5_file.keys():
+                if dataset_name == "parameters":
+                    continue
+                if isinstance(getattr(type(self), dataset_name, None), property):
+                    continue  # skip properties, they are not writable
                 setattr(self, dataset_name, hdf5_file[dataset_name])
+            for field in hdf5_file.attrs.keys():
+                setattr(self, field, hdf5_file.attrs[field])
             logger.debug(f"Read data from {self._file_path}")
+
 
 
     def write(self, file_path: Path = None, directory: Path = None, parameters: Parameters = None, **kwargs):
@@ -57,11 +67,12 @@ class BaseStruct(ABC):
 
             self._file_path = file_path
 
+        # the fields to write:
+        # all attributes of the dataclass
         with h5py.File(file_path, 'w') as h5file:
-            for field in fields(self):
-                attr = field.name
-                value = getattr(self, attr)
-                self.to_h5_field(h5file, attr, value)
+            for field in self._writable_fields():
+                value = getattr(self, field)
+                self._to_h5_field(h5file, field, value)
 
         file_size = file_path.stat().st_size
         if file_size >= 1024 ** 3:
@@ -70,7 +81,7 @@ class BaseStruct(ABC):
             human_readable_size = f"{file_size / (1024 ** 2):.2f} MB"
         else:
             human_readable_size = f"{file_size / 1024:.2f} KB"
-        
+
         logger.info(
             f"Data written to {file_path} ({human_readable_size})"
         )
@@ -86,15 +97,37 @@ class BaseStruct(ABC):
         if file_path is None:
             file_path = cls.get_file_path(directory, parameters, **kwargs)
 
-        # initialize the dataclass with dummy values and the file path -> it will be populated in the __post_init__ method
+        # initialize the dataclass with dummy values and the file path
+        # -> most values will be populated in the __post_init__ method by reading the HDF5 file
         data = {f.name: None for f in fields(cls)}
+        data['parameters'] = parameters
         data['_file_path'] = file_path
         return cls(**data)
 
 
+    def _writable_fields(self):
+        """
+        Returns a list of fields that can be written to the HDF5 file. Children of the BaseStruct class will have dataclass fields and properties that can be written.
+        """
+        writable_fields = []
+        for field in fields(self):
+            writable_fields.append(field.name)
+
+        if self.parameters is not None:
+            for field in self.parameters.simulation.store_grids:
+                if field in writable_fields:
+                    continue
+
+                # if the field is not a dataclass field, but a property, we can still write it
+                if isinstance(getattr(type(self), field, None), property):
+                    writable_fields.append(field)
+                else:
+                    logger.warning(f"Field {field} not found in {self.__class__.__name__}. It will not be written to the HDF5 file.")
+        return writable_fields
 
 
-    def to_h5_field(self, file, attr: str, value: object):
+
+    def _to_h5_field(self, file, attr: str, value: object):
         """
         Write the content of the dataclass into an HDF5 file.
         """
@@ -106,17 +139,25 @@ class BaseStruct(ABC):
 
         # lists, tuples and arrays can be stored as datasets
         elif isinstance(value, (list, tuple)) or hasattr(value, 'shape'):
-            file.create_dataset(attr, data=value)
+            # except if the elements are strings, then we need additional conversion
+            value = np.asarray(value)
+            if value.dtype.kind == 'U':  # Unicode string
+                shape = value.shape
+                # convert back to list because h5py complains otherwise
+                value = [str(v) for v in value]
+                file.create_dataset(attr, shape, data=value, dtype=h5py.string_dtype())
+            else:
+                file.create_dataset(attr, data=value)
 
         # finally dataclasses and dictionaries can be stored as groups and subgroups
-        elif is_dataclass(value):
-            data = asdict(value)
-            self.to_h5_field(file, attr, data)
+        elif isinstance(value, Parameters):
+            data = to_dict(value)
+            self._to_h5_field(file, attr, data)
 
         elif isinstance(value, dict):
             sub_group = file.create_group(attr)
             for k, v in value.items():
-                self.to_h5_field(sub_group, k, v)
+                self._to_h5_field(sub_group, k, v)
 
         elif isinstance(value, Path):
             file.attrs[attr] = str(value)

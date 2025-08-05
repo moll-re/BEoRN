@@ -30,9 +30,9 @@ def subgrid_boundaries(center: tuple[float, float, float], sub_grid_radius: int,
     for j, j_range in zip((x, y, z), (x_range, y_range, z_range)):
         if j < sub_grid_radius:
             j_range[0] = 0
-            j_range[1] = sub_grid_radius
+            j_range[1] = 2 * sub_grid_radius
         elif j > grid_shape[0] - sub_grid_radius:
-            j_range[0] = grid_shape[0] - sub_grid_radius
+            j_range[0] = grid_shape[0] - 2 * sub_grid_radius
             j_range[1] = grid_shape[0]
         else:
             j_range[0] = j - sub_grid_radius
@@ -119,7 +119,7 @@ def spread_excess_ionization(parameters: Parameters, input_grid: np.ndarray):
             futures.append(f)
             # logger.debug(f"Submitted process for excess region at index {idx}")
 
-        # even for very large grids, spreading should be quick so we set a timeout of 5 minutes
+        # even for very large grids spreading should be quick so we set a timeout of 5 minutes
         completed, uncompleted = wait(futures, timeout = 300)
         assert len(uncompleted) == 0, f"{len(uncompleted)} processes did not complete successfully."
 

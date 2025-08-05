@@ -7,8 +7,9 @@ from pathlib import Path
 import importlib
 import hashlib
 from dataclasses import dataclass, field, is_dataclass, fields
-from typing import Literal, Union
+from typing import Literal
 import numpy as np
+import json
 import yaml
 from .helpers import bin_centers
 
@@ -81,6 +82,7 @@ class SourceParameters:
     """Lower limit for the ionization fraction. All pixels with xHII < min_xHII_value will be set to this value."""
 
     mass_accretion_lookback: int = 5
+
 
 @dataclass(slots = True)
 class SolverParameters:
@@ -190,6 +192,7 @@ class SimulationParameters:
 
     halo_catalogs_thesan_tree: Path = None
     halo_catalogs_thesan_offsets: Path = None
+    # TODO rename since this is actually the mass assignment used for the background density field. For assigning the halos to the grid we always use NGP
     halo_catalogs_thesan_mass_assignment: Literal['NGP', 'CIC'] = 'CIC'
     """Method used to assign the halo mass to the grid. Can be either NGP (Nearest Grid Point) or CIC (Cloud In Cell)."""
 
@@ -197,6 +200,7 @@ class SimulationParameters:
         # ensure the the np.ndarray fields are numpy arrays
         if isinstance(self.halo_mass_accretion_alpha, list):
             self.halo_mass_accretion_alpha = np.array(self.halo_mass_accretion_alpha)
+
 
 @dataclass(slots = True)
 class CosmologyParameters:
@@ -302,19 +306,12 @@ class Parameters:
         """
         Generates a unique hash for the current set of parameters. This can be used as a unique key when caching the computations.
         """
-        hash_list = []
-        # loops over all (even nested) members and replaces them by hashable types
-        for f in fields(self):
-            key = f.name
-            value = getattr(self, key)
-            if is_dataclass(value):
-                for ff in fields(value):
-                    kk = ff.name
-                    v = getattr(value, kk)
-                    hash_list.append(make_hashable(v))
-            else:
-                hash_list.append(make_hashable(value))
-        return hashlib.md5(str(hash_list).encode()).hexdigest()
+        dict_params = to_dict(self)
+        # using the string representation of the dictionary is not optimal because it is not guaranteed to be the same for the same dictionary (if the order of the keys is different for instance)
+        # but the key is that the hashes are guaranteed to be different for unique parameter sets
+        dict_string = f"{dict_params}"
+
+        return hashlib.md5(dict_string.encode()).hexdigest()
 
 
     @classmethod
@@ -346,16 +343,26 @@ class Parameters:
 
 
 
-def make_hashable(item):
-    if isinstance(item, np.ndarray):
-        return make_hashable(item.tolist())
-    elif isinstance(item, list):
-        return str(item)
-    elif isinstance(item, dict):
-        return frozenset(item.items())
-    elif isinstance(item, Path):
-        return item.as_posix()
-    elif callable(item):
-        return item.__name__
-    else:
-        return item
+def to_dict(obj: dataclass) -> dict:
+    """
+    Convert a dataclass object to an hdf5-compatible dictionary.
+    """
+    out = {}
+    for f in fields(obj):
+        value = getattr(obj, f.name)
+        if is_dataclass(value):
+            # recursively convert dataclass to dict
+            out[f.name] = to_dict(value)
+        elif isinstance(value, (list, tuple)):
+            # ensure the types are writable to hdf5
+            if isinstance(value[0], Path):
+                out[f.name] = [v.as_posix() for v in value]
+            else:
+                out[f.name] = value
+        elif isinstance(value, Path):
+            # convert Path to string
+            out[f.name] = value.as_posix()
+        else:
+            out[f.name] = value
+
+    return out

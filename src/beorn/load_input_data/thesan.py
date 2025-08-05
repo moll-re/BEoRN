@@ -56,44 +56,40 @@ def get_halo_accretion_rate_from_tree(parameters: Parameters, current_index: int
         # now we can find the next progenitors
         current_halo_indices = progenitor_indices
 
-
+    # at this point halo_mass_history has the same shape as redshift_range, and the sorting is current_redshift -> past redshifts
+    # remove invalid values, but don't set them to 0 because the fitting is in log space
+    # TODO - what happens if the mass is set to the previous mass instead (setting alpha to 0 instead to a high value)
     halo_mass_history[halo_mass_history <= 0] = 1
-    logger.debug(f"Found {np.sum(np.isnan(halo_mass_history))} haloes where the mass is negative")
-    logger.debug(f"Found {np.sum(np.any(halo_mass_history == 0, axis=1))} trees that stopped early")
+    logger.debug(f"Found {np.sum(np.isnan(halo_mass_history))} haloes with nan masses")
+    logger.debug(f"Found {np.sum(np.any(halo_mass_history == 1, axis=1))} trees that stopped early (invalid or missing mass)")
 
-    # redshift_range = redshifts[snapshot_index - MAX_LOOKBACK + 1:snapshot_index + 1]
-    # redshift_range = np.flip(redshift_range)  # flip to match the order of halo_mass_history
-    halo_alphas = vectorized_alpha_fit(parameters, redshift_range, halo_mass_history)
+    halo_alphas = vectorized_alpha_fit(redshift_range, halo_mass_history)
     logger.debug(f"Fitting gave {np.sum(np.isnan(halo_alphas))} NaN values and {np.sum(np.isinf(halo_alphas))} inf values.")
 
-
-    # clip small values
-    # - negative accretion has no meaning in beorn
-    # - all values should lie in the "paintable" range
-    # clip large values to the maximum value
-    # note that the upper limit is above the paintable range, so we use the -2 index to make sure that the halos are painted
-    alpha_range = parameters.simulation.halo_mass_accretion_alpha
-    below = halo_alphas < alpha_range[0]
-    above = halo_alphas > alpha_range[-2]
-    halo_alphas[below] = alpha_range[0]
-    halo_alphas[above] = alpha_range[-2]
-    logger.debug(f"Corrected {np.sum(below)} alphas below {alpha_range[0]:.2f} and {np.sum(above)} alphas above {alpha_range[-2]:.2f}")
-
+    # nan values should not occur but might happen on the first snapshot since there is no lookback
+    # set these values to the baseline value
+    halo_alphas[np.isnan(halo_alphas)] = 0.79
+    # TODO - don't hardcode the baseline value
     return current_halo_ids, halo_alphas
 
 
 def get_lookback_range(parameters: Parameters, current_index: int) -> np.ndarray:
+    """
+    Returns the redshift range for the lookback time in ascending order, meaning current_redshift is the first element and higher redshifts are later in the array.
+    """
     # the lookback should cover a fixed time but since the snapshots are spaced in redshift space we need to calculate the range for each redshift
-    lookback_time = 200 # Myr
-    # depending on the current redshift, the range of redshifts will be longer or shorter
+    # the characteristic time for the accretion is determined by the size of the resulting profile
+    # For a profile a around 200 comoving Mpc this corresponds to a causal time of about 600 Myr
+    lookback_time = 600 # Myr
+    # depending on the current redshift, the corresponding number of snapshots is different
     redshifts = parameters.solver.redshifts
     current_redshift = redshifts[current_index]
+
     # TODO - hardcoded for now:
     mass_accretion_lookback = parameters.source.mass_accretion_lookback
     lookback_index = max(0, current_index - mass_accretion_lookback)
 
     redshifts = redshifts[lookback_index:current_index + 1]
-
     return np.flip(redshifts)
 
 
@@ -182,17 +178,29 @@ def load_halo_catalog(path: Path, redshift_index: int, parameters: Parameters) -
     # TODO
     full_alphas[np.isinf(full_alphas)] = 0.79
 
+    # finally - clip the alphas to the range that is allowed by the parameters
+    # - negative accretion has no meaning in beorn
+    # - all values should lie in the "paintable" range, i.e. not be too high
+    # note that the upper limit is above the paintable range, so we use the -2 index to make sure that the halos are "paintable"
+
+    alpha_range = parameters.simulation.halo_mass_accretion_alpha
+    below = full_alphas < alpha_range[0]
+    above = full_alphas > alpha_range[-2]
+    full_alphas[below] = alpha_range[0]
+    full_alphas[above] = alpha_range[-2]
+    logger.debug(f"Corrected {np.sum(below)} alphas below {alpha_range[0]:.2f} and {np.sum(above)} alphas above {alpha_range[-2]:.2f}")
+
     assert full_alphas.shape == current_halo_masses.shape, "The alphas and masses must have the same shape"
 
     h = parameters.cosmology.h
     catalog = HaloCatalog(
         positions = current_halo_positions * 1e-3 / h, # convert from kpc/h to Mpc/h to Mpc
-        masses = current_halo_masses * 10**10 / h, # convert to Msun/h to Msun
+        masses = current_halo_masses * 1e10 / h, # convert to Msun/h to Msun
         alphas = full_alphas,
         parameters = parameters
     )
 
-    logger.debug(f"Catalog alphas: min={catalog.alphas.min():.2f}, max={catalog.alphas.max():.2f}, mean={catalog.alphas.mean():.2f}, std={catalog.alphas.std():.2f}")
+    logger.debug(f"Catalog alphas: min={catalog.alphas.min(initial=0):.2f}, max={catalog.alphas.max(initial=0):.2f}, mean={catalog.alphas.mean():.2f}, std={catalog.alphas.std():.2f}")
     return catalog
 
 
@@ -222,7 +230,6 @@ def load_density_field(snapshot_path: Path, parameters: Parameters) -> np.ndarra
     # convert the coordinates to Mpc/h
     particle_positions *= 1e-3 / parameters.cosmology.h
 
-    # nn_native.map_particles_to_mesh(mesh, parameters.simulation.Lbox, particle_positions)
     mass_assignment = parameters.simulation.halo_catalogs_thesan_mass_assignment
     pylians.map_particles_to_mesh(mesh, parameters.simulation.Lbox, particle_positions, mass_assignment=mass_assignment)
 
