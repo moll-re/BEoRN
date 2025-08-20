@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 from ..cosmo import comoving_distance, hubble
 from ..cross_sections import alpha_HII
-from ..massaccretion import mass_accretion, plot_halo_mass
 from ..cross_sections import sigma_HI, sigma_HeI
 from ..io import Handler
 from ..structs.parameters import Parameters
@@ -22,6 +21,7 @@ from ..constants import m_p_in_Msun, km_per_Mpc, h_eV_sec, cm_per_Mpc, E_HI, E_H
 from .. import global_qty
 from ..astro import f_Xh, f_star_Halo, eps_xray
 from .helpers import Ngdot_ion, mean_gamma_ion_xray, solve_xe, rho_alpha_profile, cum_optical_depth
+from .massaccretion import mass_accretion
 
 
 class ProfileSolver:
@@ -30,14 +30,14 @@ class ProfileSolver:
     TODO
     """
 
-    def __init__(self, parameters: Parameters, handler: Handler):
+    def __init__(self, parameters: Parameters, handler: Handler, redshifts: np.ndarray):
         """
         Args:
             parameters: Parameters dataclass
             handler: Handler responsible for writing the computed profiles to disk so that they can be used later on
         """
 
-        # self.z_initial = parameters.solver.z_max  # starting redshift
+        # self.z_initial = parameters.solver.Z  # starting redshift
         # if self.z_initial < 35:
         #     # TODO: add this warning as a validator of the parameters dataclass
         #     logger.warning('z_start (parameters.solver.zmax) should be larger than 35.')
@@ -49,10 +49,10 @@ class ProfileSolver:
         self.r_grid = np.logspace(np.log10(rmin), np.log10(rmax), Nr) ##cMpc/h
         self.parameters = parameters
         self.handler = handler
+        self.z_bins = redshifts
 
 
     def solve(self) -> RadiationProfiles:
-        self.z_bins = self.parameters.solver.redshifts
         # we will compute the profiles for specific values of M and dM/dt. Later on we will assume that the profiles are the same for all halos in a bin around these values
         # so we need both: the values at the center of the bin and the values at the edges of the bin
         halo_mass_bins, _ = mass_accretion(
@@ -72,9 +72,6 @@ class ProfileSolver:
         self.halo_mass_derivative = halo_mass_derivative
         # both arrays have shape [mass_bins_center, alpha_bins_center, z_bins]
 
-        if logger.isEnabledFor(logging.DEBUG):
-            plot_halo_mass(halo_mass, halo_mass_derivative, self.parameters.simulation.halo_mass_bins, self.z_bins, self.parameters.simulation.halo_mass_accretion_alpha)
-
         if self.parameters.solver.fXh == 'constant':
             logger.info('param.solver.fXh is set to constant. We will assume f_X,h = 2e-4**0.225')
             x_e = np.full(len(self.z_bins), 2e-4)
@@ -86,20 +83,18 @@ class ProfileSolver:
             x_e = solve_xe(self.parameters, Gamma_ion, Gamma_sec_ion, self.z_bins)
             logger.info('param.solver.fXh is not set to constant. We will compute the free e- fraction x_e and assume fXh = x_e**0.225.')
 
-        logger.info(f"Computing profiles for {len(self.z_bins)} redshifts")
+        logger.info(f"Computing profiles for {self.z_bins.size} redshifts, {self.parameters.simulation.halo_mass_bins.size - 1} halo mass bins and {self.parameters.simulation.halo_mass_accretion_alpha.size - 1} alpha bins.")
         r_bubble = self.R_bubble()
-        r_bubble = r_bubble.clip(min=0) # cMpc/h
 
         rho_xray = self.rho_xray(self.r_grid, x_e)
         rho_heat = self.rho_heat(rho_xray)
 
         r_lyal = np.logspace(-5, 2, 1000, base=10)
-        ##    physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
-        # TODO
+        # TODO - recheck this:
+        # physical distance for lyal profile. Never goes further away than 10**2 = 100 pMpc/h (checked)
 
         rho_alpha = rho_alpha_profile(self.parameters, self.z_bins, r_lyal, halo_mass, halo_mass_derivative)
         logger.debug(f"Results have shapes: {rho_xray.shape=}, {rho_heat.shape=}, {r_bubble.shape=}, {r_lyal.shape=}, {rho_alpha.shape=}")
-        # TODO assert correct shapes here!
 
         return RadiationProfiles(
             parameters = self.parameters,
@@ -130,36 +125,45 @@ class ProfileSolver:
             self.halo_mass_evolution,
             self.halo_mass_derivative
         )  # s-1
+        assert np.all(np.isfinite(Ngam_dot)), "Ngam_dot contains NaN values. Check the parameters and the mass accretion."
         Ob, h0 = self.parameters.cosmology.Ob, self.parameters.cosmology.h
 
         # \bar{n}^0_H - mean comoving number density of baryons [Mpc/h]**-3
-        comoving_baryon_number_density = (Ob * constants.rhoc0) / (constants.m_p_in_Msun * h0)
+        baryon_density = (Ob * constants.rhoc0) / (constants.m_p_in_Msun * h0)
+        # scale factors corresponding to the redshifts
+        scale_factors = 1 / (self.z_bins + 1)
+        # b_0(z) - physical baryon density
+        physical_baryon_density = baryon_density / scale_factors** 3
+        # clumping factor
+        clumping_factor = self.parameters.cosmology.clumping
 
-        aa = 1 / (self.z_bins + 1)
-        nb0_z = comoving_baryon_number_density * (1 + self.z_bins) ** 3 # physical baryon density
+        nb0_interp  = interp1d(scale_factors, physical_baryon_density, fill_value = 'extrapolate')
+        Ngam_interp = interp1d(scale_factors, Ngam_dot, axis = -1, fill_value = 'extrapolate')
 
-        nb0_interp  = interp1d(aa, nb0_z, fill_value = 'extrapolate')
-        Ngam_interp = interp1d(aa, Ngam_dot, axis = -1, fill_value = 'extrapolate')
-        C = self.parameters.cosmology.clumping #.0 #clumping factor
-        #source = lambda r, a: km_per_Mpc / (hubble(1 / a - 1, param) * a) * (Ngam_interp(a) / (4 * np.pi * r ** 2 * nb0) - alpha_HII( 1e4) / cm_per_Mpc ** 3 * a ** -3 * h0 ** 3 * nb0 * r / 3) # nb0 * a**-3 is physical baryon density
-        #source = lambda V, t: Ngam_interp(t) / nb0 - alpha_HII(1e4) * C / cm_per_Mpc ** 3 * h0 ** 3 * nb0_interp(t) * V  # eq 65 from barkana and loeb
         def volume_derivative(a, volume):
             z = 1 / a - 1
             photon_number = Ngam_interp(a)
             baryon_number = nb0_interp(a)
             # logger.debug(f"{photon_number.shape=}, {volume.shape=}")
             volume = volume.reshape(photon_number.shape)
-            return km_per_Mpc / (hubble(z, self.parameters) * a) * (photon_number / comoving_baryon_number_density - alpha_HII(1e4) * C / cm_per_Mpc ** 3 * h0 ** 3 * baryon_number * volume).flatten()  # eq 65 from barkana and loeb
+            return km_per_Mpc / (hubble(z, self.parameters) * a) * (photon_number / baryon_density - alpha_HII(1e4) * clumping_factor / cm_per_Mpc ** 3 * h0 ** 3 * baryon_number * volume).flatten()  # eq 65 from barkana and loeb
 
-        volume_shape = (self.parameters.simulation.halo_mass_bin_n - 1, len(self.parameters.simulation.halo_mass_accretion_alpha) - 1)    # the time dependence will be given by the redshift
+        # the time dependence will be given by the redshifts (added later)
+        volume_shape = (self.parameters.simulation.halo_mass_bin_n - 1, len(self.parameters.simulation.halo_mass_accretion_alpha) - 1)
         v0 = np.zeros(volume_shape)
-        sol = solve_ivp(volume_derivative, [aa[0], aa[-1]], v0.flatten(), t_eval=aa)
+
+        sol = solve_ivp(
+            volume_derivative,
+            t_span = [scale_factors[0], scale_factors[-1]],
+            y0 = v0.flatten(),
+            t_eval = scale_factors
+        )
         bubble_volume = sol.y
+        bubble_volume.clip(min = 0, out = bubble_volume)
+
         # since solve_ivp works with 1d arrays we have a flattened version currently, where the last axis is the "time"
-        # TODO - currently the last axis is technically the scale factor, should it not be converted to redshift?
-        bubble_volume = bubble_volume.reshape((*volume_shape, aa.size))
-        # now set the time (ie. redshift) dimension as the last axis, to match the other profiles
-        # bubble_volume = np.moveaxis(bubble_volume, 0, -1)
+        # even though the computation was made using the scale factors they have the same order as the redshifts. We keep them in the last axis, to match the other profiles
+        bubble_volume = bubble_volume.reshape((*volume_shape, scale_factors.size))
         bubble_radius = (bubble_volume * 3 / (4 * np.pi)) ** (1 / 3)
         return bubble_radius
 

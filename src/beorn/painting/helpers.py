@@ -12,7 +12,7 @@ from ..structs.parameters import Parameters
 
 
 
-def profile_to_3Dkernel(profile: callable, nGrid: np.ndarray, LB: int) -> np.ndarray:
+def profile_to_3Dkernel(profile: callable, nGrid: int, LB: float) -> np.ndarray:
     """
     Put profile_1D on a grid
 
@@ -30,6 +30,7 @@ def profile_to_3Dkernel(profile: callable, nGrid: np.ndarray, LB: int) -> np.nda
     rx, ry, rz = np.meshgrid(x, x, x, sparse=True)
     rgrid = np.sqrt(rx ** 2 + ry ** 2 + rz ** 2)
     kern = profile(rgrid)
+    assert np.all(np.isfinite(kern)), "Profile function returned non-finite values."
     return kern
 
 

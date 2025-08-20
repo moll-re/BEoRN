@@ -67,7 +67,10 @@ def f_star_Halo(parameters: Parameters, Mh):
     Mt = parameters.source.Mt
     g3 = parameters.source.g3
     g4 = parameters.source.g4
-    fstar = np.minimum(2 * f_st / ((Mh / Mp) ** g1 + (Mh / Mp) ** g2) * S_fct(Mh, Mt, g3, g4),1)
+    fstar = np.minimum(
+        2 * f_st / ((Mh / Mp) ** g1 + (Mh / Mp) ** g2) * S_fct(Mh, Mt, g3, g4),
+        1
+    )
     fstar[np.where(Mh < parameters.source.halo_mass_min)] = 0
     return fstar
 
@@ -105,7 +108,7 @@ def f_Xh(parameters: Parameters, x_e):
     # Schull 1985 fit.
     # C,a,b = 0.9971, 0.2663, 1.3163
     # fXh = C * (1-(1-x_e**a)**b)
-    
+
     return x_e ** 0.225
 
 

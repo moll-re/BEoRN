@@ -1,8 +1,11 @@
 import numpy as np
 from skimage.measure import label
 from scipy.ndimage import distance_transform_edt
+import logging
+logger = logging.getLogger(__name__)
 
 from ..structs.parameters import Parameters
+
 
 def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
     """
@@ -53,17 +56,17 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
     '''''''''
 
     x_ion_tot_i = np.sum(Grid)
-    print('initial sum of ionized fraction :', round(np.sum(Grid), 3))
+    logger.debug(f'Initial sum of ionized fraction  {round(np.sum(Grid), 3)}')
 
     if x_ion_tot_i > Grid.size:
-        print('Universe is fully ionized.')
+        logger.debug('Universe is fully ionized.')
         Grid = np.array([1])
 
     else:
-        print('Universe not fully ionized : xHII is', round(x_ion_tot_i / Grid.size, 4))
+        logger.info(f'Universe not fully ionized : xHII is {round(x_ion_tot_i / Grid.size, 4)}.')
 
         region_nbr, size_of_region = np.unique(label_image, return_counts=True)
-        print(len(region_nbr), 'connected regions.')
+        logger.debug(f'Found {len(region_nbr)} connected regions.')
         label_max = np.max(label_image)
 
         small_regions = np.where(np.isin(label_image, region_nbr[np.where(size_of_region < pix_thresh)[
@@ -74,13 +77,11 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
         initial_excess = np.sum(Grid[small_regions] - 1)
         excess_ion = initial_excess
 
-        print('there are ', len(Small_regions_labels), 'connected regions with less than ', pix_thresh,
-              ' pixels. They contain a fraction ', round(excess_ion / x_ion_tot_i, 4),
-              'of the total ionisation fraction.')
+        logger.debug(f'There are {len(Small_regions_labels)} connected regions with less than {pix_thresh} pixels. They contain a fraction {round(excess_ion / x_ion_tot_i, 4)} of the total ionisation fraction.')
 
         Grid = spread_single(parameters, Grid, small_regions, print_time=None)  # Do the spreading for the small regions
         if np.any(Grid[small_regions] > 1):
-            print('small regions not correctly spread')
+            logger.error('small regions not correctly spread')
 
         all_regions_labels = np.array(range(1, label_max + 1))  # the remaining larges overlapping ionized regions
         large_regions_labels = all_regions_labels[np.where(np.isin(all_regions_labels, Small_regions_labels) == False)[
@@ -95,13 +96,12 @@ def spreading_excess_fast(parameters: Parameters, Grid_input, plot__=False):
             Grid = spread_single(parameters, Grid, connected_indices, print_time=None)
 
         if np.any(Grid > 1.):
-            print('Some grid pixels are still in excess.')
+            logger.error('Some grid pixels are still in excess.')
 
-        print('final xion sum: ', round(np.sum(Grid), 3))
+        logger.debug(f'final xion sum: {round(np.sum(Grid), 3)}')
         X_Ion_Tot_f = np.sum(Grid)
         if int(X_Ion_Tot_f) != int(x_ion_tot_i):
-            print('Something is wrong when redistributing photons from the overlapping regions. See '
-                  'Spreading_Excess_Fast.')
+            logger.error('Something is wrong when redistributing photons from the overlapping regions. See Spreading_Excess_Fast.')
 
     return Grid
 

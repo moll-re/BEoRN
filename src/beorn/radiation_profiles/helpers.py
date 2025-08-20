@@ -18,7 +18,7 @@ from ..cosmo import comoving_distance, hubble
 
 
 
-def Ngdot_ion(parameters: Parameters, zz, Mh, dMh_dt):
+def Ngdot_ion(parameters: Parameters, zz: np.ndarray, Mh: np.ndarray, dMh_dt: np.ndarray) -> np.ndarray:
     """
     Parameters
     ----------
@@ -38,16 +38,16 @@ def Ngdot_ion(parameters: Parameters, zz, Mh, dMh_dt):
         Ngam_dot_ion[np.where(Mh < parameters.source.halo_mass_min)] = 0
         return Ngam_dot_ion
     elif parameters.source.source_type == 'Ghara':
+        # TODO - this is untested and returns the wrong shape
         logger.warning('Ghara source type is chosen, Nion becomes just a fine tuning multiplicative factor')
         Mh = zz**0 * Mh * parameters.source.Nion # to make sure it has the correct shape
         Ngam_dot_ion = 1.33 * 1e43 * Mh/h0
         Ngam_dot_ion[np.where(Mh < parameters.source.halo_mass_min)] = 0
         return Ngam_dot_ion  # eq (1) from 3D vs 1D RT schemes.
-
     elif parameters.source.source_type == 'constant':
+        # TODO - this is untested and returns the wrong shape
         logger.info('constant number of ionising photons chosen. Param.source.Nion becomes Ngam_dot_ion.')
         return np.full(len(zz), parameters.source.Nion)
-
     elif parameters.source.source_type == 'Ross':
         return Mh / h0 * Ob / Om / (10 * 1e6 * sec_per_year) / m_p_in_Msun
     else:

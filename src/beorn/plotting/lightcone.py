@@ -31,7 +31,7 @@ def define_norm_cbar_label(data: np.ndarray, quantity: str) -> tuple:
         norm, cmap, label = LogNorm(vmin=np.min(data[data > 0]), vmax=np.max(data)), plt.get_cmap('cividis'), r'$x_{\mathrm{al}}$'
     elif quantity == 'matter':
         norm, cmap, label = Normalize(vmin=-1,vmax=5),plt.get_cmap('viridis'), r'$\delta_{\mathrm{m}}$'
-    elif quantity == 'bubbles':
+    elif quantity == 'Grid_xHII':
         norm, cmap, label = Normalize(vmin=0,vmax=1),plt.get_cmap('binary'), r'$x_{\mathrm{HII}}$'
     elif quantity == 'Grid_dTb':
         norm, cmap, label = TwoSlopeNorm(vmin=np.min(data), vcenter=0, vmax=max(np.max(data),0.001)),COLOR_GRADIENT,'$\overline{dT}_{\mathrm{b}}$ [mK]'
@@ -43,11 +43,11 @@ def define_norm_cbar_label(data: np.ndarray, quantity: str) -> tuple:
 
 def plot_lightcone(lightcone: Lightcone, ax: plt.Axes, description: str, slice_number: int = None) -> None:
     # TODO - xticks should be frequencies
-    logger.debug(f"Lightcone range is {lightcone.redshifts.min()} to {lightcone.redshifts.max()}")
-
+    logger.debug(f"Lightcone redshift range is {lightcone.redshifts.min():.2e} to {lightcone.redshifts.max():.2e}")
     ax.set_title(description)
+    # the lightcone.redshifts are actually scale factors, so we need to convert them
+    redshifts = 1 / lightcone.redshifts - 1
 
-    scale_factors = 1 / (lightcone.redshifts + 1)
     lbox = lightcone.parameters.simulation.Lbox
 
     if slice_number is None:
@@ -55,31 +55,26 @@ def plot_lightcone(lightcone: Lightcone, ax: plt.Axes, description: str, slice_n
 
     norm, cmap, label = define_norm_cbar_label(lightcone.data, lightcone.quantity)
 
-    # xi = np.tile(lightcone.redshifts, lightcone.data.shape[1])
-    # # yi = np.tile(np.linspace(0, lbox, lightcone.data.shape[1]).reshape(-1, 1), (1, lightcone.redshifts.size))
-    # yi = np.array([np.linspace(0,128,lightcone.data.shape[1]) for i in range(xi.shape[1])]).T
-    # zj = (
-    #     lightcone.data[slice_number,1:,1:] +
-    #     lightcone.data[slice_number,1:,:-1] +
-    #     lightcone.data[slice_number,:-1,1:] +
-    #     lightcone.data[slice_number,:-1,:-1]
-    # ) / 4
+    xi = np.tile(lightcone.redshifts, (lightcone.data.shape[1], 1))
+    yi = np.tile(np.linspace(0, lbox, lightcone.data.shape[1]).reshape(-1, 1), (1, lightcone.redshifts.size))
+    zj = (
+        lightcone.data[slice_number,1:,1:] +
+        lightcone.data[slice_number,1:,:-1] +
+        lightcone.data[slice_number,:-1,1:] +
+        lightcone.data[slice_number,:-1,:-1]
+    ) / 4
 
+    logger.debug(f"Plotting slice {slice_number} with {xi.shape=} x {yi.shape=} x {zj.shape=}")
 
-
-    xi = np.array([lightcone.redshifts for i in range(lightcone.data.shape[1])])
-    yi = np.array([np.linspace(0,128,lightcone.data.shape[1]) for i in range(xi.shape[1])]).T
-    zj = (lightcone.data[slice_number,1:,1:]+lightcone.data[slice_number,1:,:-1]+lightcone.data[slice_number,:-1,1:]+lightcone.data[slice_number,:-1,:-1])/4
     im = ax.pcolormesh(xi, yi, zj, cmap=cmap, norm=norm)
-    # im = ax.imshow(np.sum(lightcone.data, axis=0), cmap=cmap, norm=norm, origin='lower')
 
-    ax.set_xlabel('a(t)')
+    ax.set_xlabel('a')
     ax.set_ylabel('L (Mpc)')
-    # ax.tick_params()
 
-    # Add a secondary x-axis for redshift
+    # Add a secondary x-axis to show the redshifts
     ax2 = ax.twiny()
-    redshift_ticks = np.linspace(lightcone.redshifts[0], lightcone.redshifts[-1], 8)
+    ax2.set_xlim(redshifts[0], redshifts[-1])
+    redshift_ticks = np.linspace(redshifts[0], redshifts[-1], 10, endpoint=True)
     ax2.set_xticks(redshift_ticks, labels=np.round(redshift_ticks, 2))
     ax2.set_xlabel("z")
     # ax2.tick_params()

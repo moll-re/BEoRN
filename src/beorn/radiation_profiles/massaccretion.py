@@ -5,8 +5,8 @@ import numpy as np
 import logging
 logger = logging.getLogger(__name__)
 
-from .cosmo import Hubble
-from .structs.parameters import Parameters
+from ..cosmo import Hubble
+from ..structs.parameters import Parameters
 
 
 def mass_accretion(parameters: Parameters, z_bins: np.ndarray, m_bins: np.ndarray, alpha_bins: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -22,7 +22,7 @@ def mass_accretion(parameters: Parameters, z_bins: np.ndarray, m_bins: np.ndarra
         halo_mass_derivative is in [Msol/h/yr]
     """
     z_initial = z_bins.min()
-    logger.debug(f"Computing mass accretion for a parameter space consisting of: {m_bins.shape=}, {alpha_bins.shape=} and {z_bins.shape=}")
+    logger.debug(f"Computing mass accretion for a parameter space consisting of: {m_bins.size=}, {alpha_bins.size=} and {z_bins.size=}")
 
     halo_mass = m_bins[:, None, None] * np.exp(alpha_bins[None, :, None] * (z_initial - z_bins[None, None, :]))
     halo_mass_derivative = mass_accretion_derivative(parameters, halo_mass, z_bins, m_bins, alpha_bins)
@@ -46,32 +46,3 @@ def mass_accretion_derivative(parameters: Parameters, halo_mass: np.ndarray, z_b
     # using the function from above we can formulate an analytical expression for the derivative:
     # dMh/dt = Mh * alpha * H(z) * (z+1)
     return halo_mass * alpha_bins[None, :, None] * ((1 + z_bins) * Hubble(z_bins, parameters))[None, None, :]
-
-
-def plot_halo_mass(halo_mass: np.ndarray, halo_mass_derivative: np.ndarray, m_bins: np.ndarray, z_bins: np.ndarray, alpha_bins: np.ndarray):
-    import matplotlib.pyplot as plt
-
-    # plot the halo mass for a medium mass:
-    m_bin = m_bins.size // 2
-    m0_string = fr"$M_0 = {m_bins[m_bin]:.2g} M_{{\odot}}$"
-    plt.figure()
-    plt.xscale('log')
-    plt.xlabel('Redshift z')
-    plt.ylabel('Halo Mass [Msol]')
-    plt.yscale('log')
-    plt.title(f"Halo Mass - {m0_string}")
-    for i in range(len(alpha_bins) - 1):
-        # plot a given starting mass for all alpha values
-        plt.plot(z_bins, halo_mass[m_bin, i, :], label=f"$\\alpha = {alpha_bins[i]:.2f}$")
-    plt.legend()
-    plt.show()
-
-
-    plt.figure()
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.title(f"Halo Mass derivative - {m0_string}")
-    for i in range(len(alpha_bins) - 1):
-        # plot a given starting mass for all alpha values
-        plt.plot(z_bins, halo_mass_derivative[m_bin, i, :], label=f"$\\alpha = {alpha_bins[i]:.2f}$")
-    plt.show()

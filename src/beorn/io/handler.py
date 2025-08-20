@@ -4,8 +4,8 @@ import logging
 from typing import TypeVar
 import shutil
 
-from ..structs.parameters import Parameters
-from ..structs.base_struct import BaseStruct
+from ..structs import Parameters
+from ..structs import BaseStruct
 
 # define a typing variable to represent the fact that the return type of the read method is a subclass of BaseStruct
 BaseStructDerived = TypeVar("BaseStructDerived", bound = BaseStruct)

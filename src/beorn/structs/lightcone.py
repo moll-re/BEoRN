@@ -27,7 +27,8 @@ class Lightcone:
         # data_dict = {grid.z[i]: grid_data[i, ...] for i in range(len(grid.z))}
         def reading_function(i):
             gd = grid_data[i, ...]
-            gd[np.isnan(gd)] = 0.0  # Replace NaNs with 0.0
+            # cleanup nans TODO - remove
+            gd[np.isnan(gd)] = 0.0
             return gd
 
         scale_factors = 1 / (grid.z[:] + 1)

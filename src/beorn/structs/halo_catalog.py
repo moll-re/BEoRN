@@ -73,7 +73,7 @@ class HaloCatalog:
         # in this case where returns two arrays, we only want the first one
 
         # if indices_match.size != 0:
-        #     logger.debug(f"{alpha_range=} and {mass_range=} resulted in matches: {indices_match}")
+        #     logger.debug(f"{alpha_range=} and {mass_range=} resulted in matches: {indices_match.size}")
         return indices_match
 
 

@@ -6,47 +6,50 @@ from ..cosmo import T_adiab
 
 
 #### Mhalo(z) from simulation from HM paper
-z_array_1 = np.array(
-    [10.08083140877598, 9.705542725173212, 9.301385681293302, 8.897228637413393, 8.348729792147806, 7.684757505773671,
-     7.107390300230946, 6.5011547344110845, 5.92378752886836, 5.08660508083141])
-Mh_z_1 = np.array([94706100.0077222, 126579158.66671978, 163154262.77379718, 222053024.50155312, 324945871.5591836,
-                   530163041.15627587, 790019471.240894, 1243048829.5695167, 1991648063.8308542, 3689173954.4382358])
+z_array_1 = np.array([10.08083140877598, 9.705542725173212, 9.301385681293302, 8.897228637413393, 8.348729792147806, 7.684757505773671, 7.107390300230946, 6.5011547344110845, 5.92378752886836, 5.08660508083141])
 
-z_array_2 = np.array([12.361431870669746, 11.870669745958429, 11.379907621247115, 10.744803695150113, 9.821016166281755,
-                      8.897228637413393, 8.146651270207853, 7.453810623556583, 6.732101616628176, 5.981524249422634,
-                      5.057736720554274])
-Mh_z_2 = np.array([98203277.90631257, 136100044.66105506, 195586368.30395073, 302214265.51783735, 570040236.7896342,
-                   1114920997.0080914, 1852322215.6741183, 3191074972.923546, 5597981979.123267, 10000000000,
-                   21414535638.539528])
+Mh_z_1 = np.array([94706100.0077222, 126579158.66671978, 163154262.77379718, 222053024.50155312, 324945871.5591836, 530163041.15627587, 790019471.240894, 1243048829.5695167, 1991648063.8308542, 3689173954.4382358])
 
-z_array_3 = np.array([14.988452655889146, 14.642032332563511, 13.833718244803697, 12.70785219399538, 11.986143187066977,
-                      11.23556581986143, 10.600461893764434, 9.79214780600462, 8.926096997690532, 8.146651270207853,
-                      7.511547344110854, 6.876443418013858, 6.241339491916859, 5.6928406466512715, 5.288683602771364,
-                      5.057736720554274])
-Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775825016.8566794, 1243048829.5695167,
-                   2102977594.5461233, 3493872774.7491226, 6129168695.9257145, 11987818459.583773, 21029775945.46132,
-                   35577964903.39488, 61291686959.25715, 109488896512.76825, 178635801924.5735, 266193134612.6126,
-                   343109759067.9875])
+z_array_2 = np.array([12.361431870669746, 11.870669745958429, 11.379907621247115, 10.744803695150113, 9.821016166281755, 8.897228637413393, 8.146651270207853, 7.453810623556583, 6.732101616628176, 5.981524249422634, 5.057736720554274])
+
+Mh_z_2 = np.array([98203277.90631257, 136100044.66105506, 195586368.30395073, 302214265.51783735, 570040236.7896342, 1114920997.0080914, 1852322215.6741183, 3191074972.923546, 5597981979.123267, 10000000000, 21414535638.539528])
+
+z_array_3 = np.array([14.988452655889146, 14.642032332563511, 13.833718244803697, 12.70785219399538, 11.986143187066977, 11.23556581986143, 10.600461893764434, 9.79214780600462, 8.926096997690532, 8.146651270207853, 7.511547344110854, 6.876443418013858, 6.241339491916859, 5.6928406466512715, 5.288683602771364, 5.057736720554274])
+
+Mh_z_3 = np.array([172274291.4769941, 218063348.75063255, 368917395.4438236, 775825016.8566794, 1243048829.5695167, 2102977594.5461233, 3493872774.7491226, 6129168695.9257145, 11987818459.583773, 21029775945.46132, 35577964903.39488, 61291686959.25715, 109488896512.76825, 178635801924.5735, 266193134612.6126, 343109759067.9875])
 
 
 
-def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, z_liste, alpha_list):
+def plot_1D_profiles(parameters: Parameters, profiles: RadiationProfiles, mass_index: int, redshifts: list, alphas: list, label: str = None) -> None:
     """
-    TODO
+    Plots the profiles as a function of radius. Since they are computed for a range of masses, redshifts and alpha values, the caller can specify which mass, redshift and alpha values to plot. Different redhifts are represented by different hues, while different alpha values are represented by different line styles.
+
+    Parameters
+    ----------
+    parameters : Parameters
+        The parameters used for the simulation.
+    profiles : RadiationProfiles
+        The radiation profiles computed by the solver.
+    mass_index : int
+        The index of the mass to plot. This is used to select the correct mass bin from the profiles.
+    redshifts : list
+        A list of redshifts to plot. The according index in the profiles is determined by the closest value to the specified redshift.
+    alphas : list
+        A list of alpha values to plot. The according index in the profiles is determined by the closest value to the specified alpha.
     """
     fig, axs = plt.subplots(1, 4, figsize=(17, 5))
+    fig.suptitle(label)
 
     # since these are hdf5 datasets, we need to copy it to a numpy array first
-    co_radial_grid = profile.r_grid_cell[:]
-    r_lyal_phys = profile.r_lyal[:]
-    zz = profile.z_history[:]
+    co_radial_grid = profiles.r_grid_cell[:]
+    r_lyal_phys = profiles.r_lyal[:]
+    zz = profiles.z_history[:]
 
     Mh_list = []
     actual_alpha_list = []
 
-    # Plot the
-    for i, zi in enumerate(z_liste):
-        for j, alpha_j in enumerate(alpha_list):
+    for i, zi in enumerate(redshifts):
+        for j, alpha_j in enumerate(alphas):
             # the user specifies the redshifts and alpha values - here we find the index lying closest to these values in the profile
             ind_z = np.argmin(np.abs(zz - zi))
             z_val = zz[ind_z]
@@ -55,30 +58,30 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
             alpha_val = parameters.simulation.halo_mass_accretion_alpha[ind_alpha]
 
             # the mass history is now uniquely defined:
-            Mh_i = profile.halo_mass_bins[ind_M, ind_alpha, ind_z]
+            Mh_i = profiles.halo_mass_bins[mass_index, ind_alpha, ind_z]
             # TODO - why the 0.68 factor? is this h?
             Mh_list.append(Mh_i / 0.68)
             actual_alpha_list.append(alpha_val)
 
             # some quantities are required to plot sensible profiles
             T_adiab_z = T_adiab(z_val, parameters)
-            Temp_profile = profile.rho_heat[:, ind_M, ind_alpha, ind_z] + T_adiab_z
+            Temp_profile = profiles.rho_heat[:, mass_index, ind_alpha, ind_z] + T_adiab_z
 
             x_HII_profile = np.zeros((len(co_radial_grid)))
-            x_HII_profile[np.where(co_radial_grid < profile.R_bubble[ind_M, ind_alpha, ind_z])] = 1
+            x_HII_profile[np.where(co_radial_grid < profiles.R_bubble[mass_index, ind_alpha, ind_z])] = 1
 
-            lyal_profile = profile.rho_alpha[:, ind_M, ind_alpha, ind_z]  # *1.81e11/(1+zzi)
+            lyal_profile = profiles.rho_alpha[:, mass_index, ind_alpha, ind_z]  # *1.81e11/(1+zzi)
 
             ## plot each profile on its own axis
             # the color is determined by the redshift and alpha values
             # for increasing redshifts the color is changing from blue to red
             # for increasing alpha values the opacity is changing from faint to strong
-            color = plt.cm.coolwarm((len(z_liste) - i) / len(z_liste))
+            color = plt.cm.coolwarm((len(redshifts) - i) / len(redshifts))
             # TODO - this does not yet look good
-            alpha = 1 - 0.5 * j / len(alpha_list)
+            alpha = 1 - 0.5 * j / len(alphas)
 
             # the label is the same for all profiles
-            label = f"$z \\sim$ {z_val}\n$M_{{h}}= {Mh_list[i]:.2e}$ $\\alpha = {alpha_val:.2}$"
+            label = f"$z \\sim$ {z_val:.1f}\n$M_{{h}}= {Mh_list[i]:.2e}$\n$\\alpha = {alpha_val:.2}$"
 
 
             ax = axs[0]
@@ -101,7 +104,7 @@ def plot_1D_profiles(parameters: Parameters, profile: RadiationProfiles, ind_M, 
     ax.semilogy(z_array_3, Mh_z_3 / 0.68, color='gold', ls='--', lw=3, alpha=0.8, label='Simulation (Behroozi +20)')
 
     # plot our analytical data (and add one legend)
-    ax.semilogy(zz, profile.halo_mass_bins[ind_M, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {actual_alpha_list[0]:.2}$')
+    ax.semilogy(zz, profiles.halo_mass_bins[mass_index, ind_alpha, :] / 0.68, color='gray', alpha=1, lw=2, label=f'analytical MAR\n$M_0 = {Mh_list[0]:.2e}$, $\\alpha = {actual_alpha_list[0]:.2}$')
 
     # style the plot
     ax.set_xlim(15, 5)

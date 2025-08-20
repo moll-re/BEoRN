@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # - 'TSC' (triangular-shape cloud),
 # - 'PCS' (piecewise cubic spline).
 
-def map_particles_to_mesh(mesh: np.ndarray, box_size: float, particle_positions: np.ndarray, mass_assignment: str) -> None:
+def map_particles_to_mesh(mesh: np.ndarray, box_size: float, particle_positions: np.ndarray, mass_assignment: str, weights: np.ndarray = None) -> None:
     """
     Maps particle positions to an existing mesh using the MASL library.
 
@@ -32,5 +32,6 @@ def map_particles_to_mesh(mesh: np.ndarray, box_size: float, particle_positions:
         mesh,
         box_size,
         mass_assignment,
-        verbose=False
+        W = weights,
+        verbose = False
     )
