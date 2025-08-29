@@ -4,6 +4,7 @@ pytest
 scikit-image
 tqdm
 mpi4py
+pylians
 
 tools21cm
 astropy

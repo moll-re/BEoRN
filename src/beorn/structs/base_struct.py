@@ -1,11 +1,13 @@
 """Base data structure for derived data classes containing data required at different stages of the simulation."""
 from pathlib import Path
 from abc import ABC
+from functools import cached_property
 from dataclasses import dataclass, fields
 import h5py
 import numpy as np
 import logging
 logger = logging.getLogger(__name__)
+
 from .parameters import Parameters, to_dict
 
 
@@ -22,7 +24,7 @@ class BaseStruct(ABC):
     parameters: Parameters = None
 
     @classmethod
-    def get_file_path(cls, directory: Path, parameters: Parameters, **kwargs) -> str:
+    def get_file_path(cls, directory: Path, parameters: Parameters, **kwargs) -> Path:
         """
         Returns the file path for the HDF5 file associated with this object. The file name is generated based on the class name, parameters, and any additional keyword arguments.
         """
@@ -41,10 +43,14 @@ class BaseStruct(ABC):
             hdf5_file = h5py.File(self._file_path, 'r')
             for dataset_name in hdf5_file.keys():
                 if dataset_name == "parameters":
-                    continue
-                if isinstance(getattr(type(self), dataset_name, None), property):
+                    attribute = Parameters.from_group(hdf5_file[dataset_name])
+                elif isinstance(getattr(type(self), dataset_name, None), property):
                     continue  # skip properties, they are not writable
-                setattr(self, dataset_name, hdf5_file[dataset_name])
+                else:
+                    attribute = hdf5_file[dataset_name]
+
+                logger.debug(f"Adding dataset {dataset_name} as attribute to {self.__class__.__name__}")
+                setattr(self, dataset_name, attribute)
             for field in hdf5_file.attrs.keys():
                 setattr(self, field, hdf5_file.attrs[field])
             logger.debug(f"Read data from {self._file_path}")
@@ -56,7 +62,6 @@ class BaseStruct(ABC):
         Write the content of this dataclass into an HDF5 file. Can be called without any arguments to write to the default file path, or with a specific file path, or with additional keyword arguments to customize the file name.
         """
         if self._file_path:
-            file_path = self._file_path
             logger.debug(f"Using existing file path: {self._file_path=}, ignoring arguments.")
         else:
             if file_path and (directory or parameters or kwargs):
@@ -69,12 +74,12 @@ class BaseStruct(ABC):
 
         # the fields to write:
         # all attributes of the dataclass
-        with h5py.File(file_path, 'w') as h5file:
+        with h5py.File(self._file_path, 'w') as h5file:
             for field in self._writable_fields():
                 value = getattr(self, field)
                 self._to_h5_field(h5file, field, value)
 
-        file_size = file_path.stat().st_size
+        file_size = self._file_path.stat().st_size
         if file_size >= 1024 ** 3:
             human_readable_size = f"{file_size / (1024 ** 3):.2f} GB"
         elif file_size >= 1024 ** 2:
@@ -82,9 +87,7 @@ class BaseStruct(ABC):
         else:
             human_readable_size = f"{file_size / 1024:.2f} KB"
 
-        logger.info(
-            f"Data written to {file_path} ({human_readable_size})"
-        )
+        logger.info(f"Data written to {self._file_path} ({human_readable_size})")
 
 
     @classmethod
@@ -120,6 +123,8 @@ class BaseStruct(ABC):
 
                 # if the field is not a dataclass field, but a property, we can still write it
                 if isinstance(getattr(type(self), field, None), property):
+                    writable_fields.append(field)
+                elif isinstance(getattr(type(self), field, None), cached_property):
                     writable_fields.append(field)
                 else:
                     logger.warning(f"Field {field} not found in {self.__class__.__name__}. It will not be written to the HDF5 file.")

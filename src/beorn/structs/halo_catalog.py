@@ -111,3 +111,41 @@ class HaloCatalog:
             # at that point self.alphas is guaranteed to exist since __post_init__ was called
             alphas = self.alphas[indices]
         )
+
+
+    def halo_mass_function(self, bin_count: int = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Computes the halo mass function (HMF) from the catalog.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray, np.ndarray]
+            A tuple containing:
+            - The mass bins (in solar masses)
+            - The halo mass function values (Mpc/h)^-3 in each bin
+            - The Poisson error in each bin
+        """
+        Lbox = self.parameters.simulation.Lbox
+
+        if bin_count is None:
+            bin_count = int(10 * np.log10(self.masses.max() / self.masses.min()))
+        # increase the range a bit to capture all halos
+        bin_edges = np.logspace(np.log(self.masses.min() * 0.9), np.log(self.masses.max() * 1.1), bin_count + 1, base=np.e)
+        log_spacing = np.log(bin_edges[1]) - np.log(bin_edges[0])
+        # digitize the masses into the bins
+        indices = np.digitize(self.masses, bin_edges) - 1
+        # -1 because digitize returns the index of the bin to the right of the value
+        indices, count = np.unique(indices, return_counts=True)
+        # now we have the counts in each bin, but only for the bins that have at least one halo
+        full_count = np.zeros(bin_count, dtype=int)
+        full_count[indices] = count
+
+        # for the halo mass function we want dn / d ln(M) and then the normalization by the box volume
+        hmf = full_count / Lbox**3 / log_spacing
+
+        # for the error we assume Poisson statistics
+        error = hmf / np.sqrt(full_count)
+        assert hmf.size == bin_count, f"{hmf.size=} does not match expected {bin_count=}"
+        assert error.size == bin_count, f"{error.size=} does not match expected {bin_count=}"
+        return bin_edges, hmf, error
+

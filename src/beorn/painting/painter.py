@@ -22,8 +22,7 @@ from ..structs.global_profiles import GridDataMultiZ
 from ..structs.halo_catalog import HaloCatalog
 from .spread import spread_excess_ionization
 from .spread_old  import spreading_excess_fast
-
-from ..load_input_data.load import load_halo_catalog, load_density_field
+from ..load_input_data.base import BaseLoader
 
 CONVOLVE_FFT_KWARGS = {
     "boundary": "wrap",
@@ -44,7 +43,7 @@ class Painter:
     """
     logger = logging.getLogger(__name__)
 
-    def __init__(self, parameters: Parameters, output_handler: Handler, cache_handler: Handler = None):
+    def __init__(self, parameters: Parameters, loader: type[BaseLoader], output_handler: Handler, cache_handler: Handler = None):
         """
         Initialize the Painter class with the given parameters.
 
@@ -56,6 +55,7 @@ class Painter:
         self.parameters = parameters
         self.output_handler = output_handler
         self.cache_handler = cache_handler
+        self.loader = loader
 
 
     def paint_full(self, radiation_profiles: RadiationProfiles) -> GridDataMultiZ:
@@ -67,8 +67,7 @@ class Painter:
         Returns:
             GridDataMultiZ: The multi-redshift grid data containing the painted 3D maps for each redshift snapshot.
         """
-        multi_z_data = GridDataMultiZ(parameters=self.parameters)
-        multi_z_data.create(self.output_handler.file_root, **self.output_handler.write_kwargs)
+        multi_z_data = GridDataMultiZ.create_empty(self.parameters, self.output_handler.file_root, **self.output_handler.write_kwargs)
 
         snapshot_count = radiation_profiles.z_history.size
         self.logger.info(f"Painting profiles onto grid for {snapshot_count} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
@@ -84,6 +83,7 @@ class Painter:
                 self.logger.debug("Painted output not found in cache. Processing now")
 
                 grid_data = self.paint_single(z_index=loop_index, grid_model=radiation_profiles, loop_index=loop_index)
+                grid_data.loader = self.loader
 
                 if self.cache_handler:
                     self.cache_handler.write_file(self.parameters, grid_data, z_index=loop_index)
@@ -91,19 +91,21 @@ class Painter:
             # write the painted output to the file (append mode)
             multi_z_data.append(grid_data)
 
+        self.logger.info(f"Painting of {snapshot_count} snapshots done.")
+
         # reinitialize the grid data to create the attributes that are mapped from the hdf5 fields
         multi_z_data = self.output_handler.load_file(self.parameters, GridDataMultiZ)
         return multi_z_data
 
 
-    def paint_single(self, z_index: int, grid_model: RadiationProfiles, loop_index) -> GridData:
+    def paint_single(self, z_index: int, grid_model: RadiationProfiles, loop_index: int) -> GridData:
         """Paints the halo properties for a single redshift."""
 
         iteration_start_time = time.time()
         zero_grid = np.zeros((self.parameters.simulation.Ncell, self.parameters.simulation.Ncell, self.parameters.simulation.Ncell))
 
-        halo_catalog = load_halo_catalog(self.parameters, loop_index)
-        delta_b = load_density_field(self.parameters, loop_index)
+        halo_catalog = self.loader.load_halo_catalog(loop_index)
+        delta_b = self.loader.load_density_field(loop_index)
 
         # find matching redshift between solver output and simulation snapshot.
         # this will raise an error if the needed profiles are not available
@@ -134,7 +136,7 @@ class Painter:
         self.logger.info(f'Painting {halo_catalog.size} halos at {zgrid=:.2f} ({z_index=:.0f}).')
 
         # initialise the "main" grids here. Since they will be filled in place by multiple parallel processes, we need to use shared memory
-        # get the size of the grids
+        # get the memory size of the grids
         size = zero_grid.size * np.dtype(np.float64).itemsize
         if "bubbles" in self.parameters.simulation.store_grids:
             buffer_xHII = shared_memory.SharedMemory(create=True, size=size)
@@ -196,6 +198,9 @@ class Painter:
                         grid_model.rho_alpha[:, mass_index, alpha_index, z_index],
                         grid_model.rho_heat[:, mass_index, alpha_index, z_index],
                     )
+                    # assert not np.any(np.isnan(profiles_of_bin[0])), "R_bubble at the current range seem to be malformed (got nan values)"
+                    # assert not np.any(np.isnan(profiles_of_bin[1])), "rho_alpha at the current range seem to be malformed (got nan values)"
+                    # assert not np.any(np.isnan(profiles_of_bin[2])), "rho_heat at the current range seem to be malformed (got nan values)"
 
                     radial_grid = grid_model.r_grid_cell[:] / (1 + zgrid)  # pMpc/h
                     kwargs = {
@@ -254,8 +259,8 @@ class Painter:
 
         ## Excess spreading
         start_time = time.time()
-        spread_excess_ionization(self.parameters, Grid_xHII)
-        # Grid_xHII = spreading_excess_fast(self.parameters, Grid_xHII)
+        # spread_excess_ionization(self.parameters, Grid_xHII)
+        Grid_xHII = spreading_excess_fast(self.parameters, Grid_xHII)
 
         self.logger.info(f'Redistributing excess photons from the overlapping regions took {timedelta(seconds=time.time() - start_time)}.')
 
@@ -335,6 +340,7 @@ class Painter:
             self.paint_ionization_profile(
                 output_grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, z, halo_grid
             )
+
         if buffer_lyal:
             # initialize the output grid over the shared memory buffer
             output_grid_lyal = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_lyal.buf)
@@ -346,6 +352,7 @@ class Painter:
             self.paint_alpha_profile(
                 output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, z, truncate, halo_grid
             )
+
         if buffer_temp:
             # initialize the output grid over the shared memory buffer
             output_grid_temp = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_temp.buf)
@@ -407,7 +414,7 @@ class Painter:
         ### We use this stacked_kernel functions to impose periodic boundary conditions when the lyal or T profiles extend outside the box size. Very important for Lyman-a.
         if isinstance(truncate, float):
             # truncate below a certain radius
-            x_alpha_prof[r_lyal * (1 + z)< truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
+            x_alpha_prof[r_lyal * (1 + z) < truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
 
         kernel_xal = stacked_lyal_kernel(
             r_lyal * (1 + z),
@@ -416,8 +423,6 @@ class Painter:
             nGrid,
             nGrid_min = self.parameters.simulation.minimum_grid_size_lyal
         )
-
-        # self.logger.debug(f"kernel_xal has {np.sum(np.isnan(kernel_xal))} NaN values")
 
         if np.any(kernel_xal > 0):
             renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
@@ -454,7 +459,6 @@ class Painter:
             nGrid,
             nGrid_min = self.parameters.simulation.minimum_grid_size_heat
         )
-        # self.logger.debug(f"kernel_T has {np.sum(np.isnan(kernel_T))} NaN values")
 
         if np.any(kernel_T > 0):
             renorm = trapezoid(Temp_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_T)
