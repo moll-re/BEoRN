@@ -1,6 +1,6 @@
 import h5py
 import numpy as np
-
+from typing import Literal
 from .base import BaseLoader
 from .lookback import get_lookback_range
 from ..structs import HaloCatalog
@@ -9,7 +9,7 @@ from .alpha_fitting import vectorized_alpha_fit
 
 # from: https://thesan-project.com/thesan/thesan.html
 THESAN_PARTICLE_COUNT = 1050**3
-
+INVALID_FALLBACK: float | Literal["mean", "median"] = 0.79
 
 class ThesanLoader(BaseLoader):
     """
@@ -44,9 +44,6 @@ class ThesanLoader(BaseLoader):
 
         # now restrict to the redshift range
         indices = np.where((redshifts >= self.parameters.solver.redshifts[0]) & (redshifts <= self.parameters.solver.redshifts[-1]))[0]
-
-        # # TODO - remove this temporary fix
-        # indices = indices[::10] # reduce the number of redshifts to speed up the simulation
 
         self._redshifts = redshifts[indices]
         self.catalogs = [catalogs[i] for i in indices]
@@ -92,6 +89,13 @@ class ThesanLoader(BaseLoader):
         current_halo_ids = tree_halo_ids[current_halo_indices]
         current_halo_count = current_halo_indices.sum()
 
+        # if the redshift range is shorter than the range requested in the parameters, this means that the snapshot is early and has too few predecessors
+        if redshift_range.size < self.parameters.source.mass_accretion_lookback:
+            # in this case a fit is likely to be very unstable, so we just return a constant baseline value
+            # since at that point halo masses are low, this is not too problematic
+            self.logger.warning(f"Available redshifts for lookback ({redshift_range.size}) are too few compared to the requested ({self.parameters.source.mass_accretion_lookback}), returning constant fallback value for mass accretion rate")
+            return current_halo_ids, np.full(current_halo_count, 0.79)
+
 
         halo_mass_history = np.ndarray((current_halo_count, redshift_range.size))
 
@@ -116,10 +120,6 @@ class ThesanLoader(BaseLoader):
         halo_alphas = vectorized_alpha_fit(redshift_range, halo_mass_history)
         self.logger.debug(f"Fitting gave {np.sum(np.isnan(halo_alphas))} NaN values and {np.sum(np.isinf(halo_alphas))} inf values.")
 
-        # nan values should not occur but might happen on the first snapshot since there is no lookback
-        # set these values to the baseline value
-        halo_alphas[np.isnan(halo_alphas)] = 0.79
-        # TODO - don't hardcode the baseline value
         return current_halo_ids, halo_alphas
 
 
@@ -146,7 +146,6 @@ class ThesanLoader(BaseLoader):
         current_halo_positions = np.zeros((snapshot_group_count, 3))
         current_halo_masses = np.zeros((snapshot_group_count))
         current_subhalo_to_group_mappings = np.zeros((snapshot_group_count), dtype=int)
-
 
         group_start_index = 0
         subhalo_start_index = 0
@@ -199,18 +198,19 @@ class ThesanLoader(BaseLoader):
         # TODO - implement lower cutoff for halo mass when deducing alphas
         # TODO - remove this temporary alpha adjustment
         mean_alpha = np.mean(sorted_halo_alphas)
+        alpha_fallback = self.fallback_alpha(sorted_halo_alphas)
 
         # fill the baseline value and replace it where we have a value: (for the groups!)
-        full_alphas = np.ones(snapshot_group_count) * 0.79
+        full_alphas = np.full(snapshot_group_count, alpha_fallback)
 
         group_ids = current_subhalo_to_group_mappings[tree_ids]
         # fill in the alphas for the halos that are in the tree
         full_alphas[group_ids] = sorted_halo_alphas
 
-        # the alpha fitting returned np.inf for halos that have "too short" mass histories
-        # for now we just set them to the baseline value as well, but this should be investigated further
-        # TODO
-        full_alphas[np.isinf(full_alphas)] = 0.79
+        # the alpha fitting returned np.inf for halos that have "too short" mass histories and nan for halos that have no history at all
+        # for now we just set them to the baseline value as well, but the treatment could be refined
+        # or in working form:
+        full_alphas[~np.isfinite(full_alphas)] = alpha_fallback
 
         # TODO - remove
         full_alphas[:] = mean_alpha
@@ -228,7 +228,6 @@ class ThesanLoader(BaseLoader):
         self.logger.debug(f"Corrected {np.sum(below)} alphas below {alpha_range[0]:.2f} and {np.sum(above)} alphas above {alpha_range[-2]:.2f}")
 
         assert full_alphas.shape == current_halo_masses.shape, "The alphas and masses must have the same shape"
-
 
         catalog = HaloCatalog(
             positions = current_halo_positions * 1e-3 / self.thesan_h, # convert from kpc/h to Mpc/h to Mpc
@@ -316,3 +315,14 @@ class ThesanLoader(BaseLoader):
         pylians.map_particles_to_mesh(mesh_z, self.parameters.simulation.Lbox, particle_positions, mass_assignment=mass_assignment, weights = particle_velocities[:, 2])
 
         return mesh_x, mesh_y, mesh_z
+
+
+    def fallback_alpha(self, halo_alpha: np.ndarray) -> float:
+        if isinstance(INVALID_FALLBACK, float):
+            return INVALID_FALLBACK
+        elif INVALID_FALLBACK == "mean":
+            return np.mean(halo_alpha)
+        elif INVALID_FALLBACK == "median":
+            return np.median(halo_alpha)
+        else:
+            raise ValueError(f"Invalid fallback method: {INVALID_FALLBACK}")

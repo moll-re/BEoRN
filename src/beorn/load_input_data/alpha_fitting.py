@@ -28,13 +28,4 @@ def vectorized_alpha_fit(redshifts: np.ndarray, mass_history: np.ndarray) -> np.
     # Now for each pair of zs and ys we can compute the alpha minimizing the least squares error
     alphas = np.sum(y * dz[np.newaxis, :], axis=1) / np.sum(dz[np.newaxis, :] ** 2, axis=1)
 
-    # plt.figure()
-    # # pick about 15 objects to plot
-    # for i in range(min(5, mass_history.shape[0])):
-    #     plt.plot(dz, y[i, :], ".", label=f"Object {i}", color=f"C{i}")
-    #     # also plot the fitted line
-    #     plt.plot(dz, alphas[i] * dz, "--", label=f"Fit {i}", color=f"C{i}")
-    # plt.xlabel("Redshift")
-    # plt.show()
-
     return -1 * alphas

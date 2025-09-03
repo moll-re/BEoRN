@@ -12,6 +12,7 @@ from . import constants
 from . import cosmo
 from . import couplings
 from . import cross_sections
+from . import particle_mapping
 
 # This is intentionally not imported automatically because it requires optional dependencies
 # from . import wrapper_21cmfast

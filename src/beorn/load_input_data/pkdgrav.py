@@ -13,9 +13,6 @@ class PKDGravLoader(BaseLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.file_root = self.parameters.simulation.file_root
-        # self.tree_root = self.pkdrgrav / "postprocessing"/ "trees"/ "LHaloTree"
-        # self.snapshot_path_root = self.pkdrgrav / "output"
-        # self.offset_path_root = self.pkdrgrav / "postprocessing" / "offsets"
 
 
         logs = np.loadtxt(self.file_root / "CDM_200Mpc_2048.log")
@@ -33,12 +30,14 @@ class PKDGravLoader(BaseLoader):
 
         # There is a mismatch between the logs and the saved snapshots - the last ~20 snapshots were not saved (too large)
 
-        # Now reduce the z_range to a range that was requested
+        # Now reduce the redshift range to the one requested
         indices = np.where((redshifts >= self.parameters.solver.redshifts[0]) & (redshifts <= self.parameters.solver.redshifts[-1]))[0]
-        self._redshifts = redshifts[indices]
+        self._redshifts = np.array(redshifts[indices])
         self.logger.debug(f"Reducing available redshift range to the restriction imposed by the {len(self._redshifts)} snapshots.")
         self.catalogs = [catalogs[i] for i in indices]
         self.density_paths = [density_paths[i] for i in indices]
+
+        self.remove_duplicates()
 
         self.logger.info(f"Initialized PKDGrav data loader - reading files from {self.file_root}.")
 
@@ -46,6 +45,30 @@ class PKDGravLoader(BaseLoader):
     @property
     def redshifts(self):
         return self._redshifts
+
+
+    def remove_duplicates(self) -> None:
+        # The particular PKDGrav data we have has some duplicate redshifts due to restarted transfers - we want to discard them
+        z_initial = np.inf
+        redshifts_copy = []
+        catalogs_copy = []
+        density_paths_copy = []
+
+        for i in range(self.redshifts.size):
+            if self.redshifts[i] >= z_initial:
+                self.logger.debug(f"Removing {i}th snapshot from the list")
+            else:
+                # keep the snapshot
+                redshifts_copy.append(self.redshifts[i])
+                catalogs_copy.append(self.catalogs[i])
+                density_paths_copy.append(self.density_paths[i])
+                z_initial = self.redshifts[i]
+
+        self._redshifts = np.array(redshifts_copy)
+        self.catalogs = catalogs_copy
+        self.density_paths = density_paths_copy
+
+        self.logger.debug(f"After removing duplicates, {self.redshifts.size} snapshots remain - range: {self.redshifts[0]} to {self.redshifts[-1]}")
 
 
     def load_halo_catalog(self, redshift_index: int) -> HaloCatalog:
@@ -67,20 +90,20 @@ class PKDGravLoader(BaseLoader):
         Ncell = self.parameters.simulation.Ncell
 
         density_path = self.density_paths[redshift_index]
-        dens = np.fromfile(density_path, dtype=np.float32)
-        file_dimension = int(dens.shape[0]**(1/3))
+        density_array = np.fromfile(density_path, dtype=np.float32)
 
-        assert file_dimension == Ncell, f"Density file dimension {file_dimension} does not match simulation Ncell {Ncell}"
-        pkdgrav_density = dens.reshape(Ncell, Ncell, Ncell)
-        # take the transpose to match X_ion map coordinates
-        pkdgrav_density = pkdgrav_density.T
+        assert Ncell**3 == density_array.size, f"Density file dimension {density_array.size} does not match simulation {Ncell**3 = }"
+
+        # Put into the right shape
+        density = density_array.reshape(Ncell, Ncell, Ncell)
+        density = density.T
         # V_total = LBox ** 3
         # V_cell = (LBox / nGrid) ** 3
         # mass  = (pkd * rhoc0 * V_total).astype(np.float64)
         # rho_m = mass / V_cell
         # delta_b = (rho_m) / np.mean(rho_m, dtype=np.float64) - 1
         # since we divide by the mean, we can skip the mass calculation
-        delta_b = pkdgrav_density / np.mean(pkdgrav_density, dtype=np.float64) - 1
+        delta_b = density / np.mean(density, dtype=np.float64) - 1
         return delta_b
 
 
