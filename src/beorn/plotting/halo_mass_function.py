@@ -15,4 +15,3 @@ def plot_halo_mass_function(ax: plt.Axes, halo_catalog: HaloCatalog, bin_count: 
     ax.set_yscale('log')
     ax.set_xlabel(r'Halo Mass $M$ [$M_\odot$]')
     ax.set_ylabel(r'$\frac{dn}{d\ln M}$ [$(\mathrm{Mpc}/h)^{-3}$]')
-    ax.legend()

@@ -107,9 +107,10 @@ class GridDataMultiZ(BaseStruct, GridBasePropertiesMixin, GridDerivedPropertiesM
         box_dims = parameters.simulation.Lbox
         power_spectrum = np.zeros((self.z.size, bin_number))
 
+        delta_quantity = quantity[:] / np.mean(quantity, axis=(1, 2, 3))[:, np.newaxis, np.newaxis, np.newaxis] - 1
+
         for i, z in enumerate(self.z):
-            delta_quantity = quantity[i, ...] / np.nanmean(quantity[i, ...]) - 1
-            power_spectrum[i, ...], bins = t2c.power_spectrum.power_spectrum_1d(delta_quantity, box_dims=box_dims, kbins=bin_number)
+            power_spectrum[i, ...], bins = t2c.power_spectrum.power_spectrum_1d(delta_quantity[i, ...], box_dims=box_dims, kbins=bin_number)
 
         return power_spectrum, bins
 

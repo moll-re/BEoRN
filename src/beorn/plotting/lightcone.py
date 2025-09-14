@@ -34,26 +34,26 @@ def define_norm_cbar_label(data: np.ndarray, quantity: str) -> tuple:
     elif quantity == 'Grid_xHII':
         norm, cmap, label = Normalize(vmin=0,vmax=1),plt.get_cmap('binary'), r'$x_{\mathrm{HII}}$'
     elif quantity == 'Grid_dTb':
-        norm, cmap, label = TwoSlopeNorm(vmin=np.min(data), vcenter=0, vmax=max(np.max(data),0.001)),COLOR_GRADIENT,'$\overline{dT}_{\mathrm{b}}$ [mK]'
+        norm = TwoSlopeNorm(vmin = np.min(data), vcenter = 0, vmax = max(np.max(data), 0.001))
+        cmap = COLOR_GRADIENT
+        label = r'$\overline{dT}_{\mathrm{b}}$ [mK]'
     else:
         raise ValueError(f"Unknown quantity '{quantity}' for lightcone plotting.")
-        norm = LogNorm(vmin=np.min(data) + 1, vmax=np.max(data) + 1)
+
     return norm, cmap, label
 
 
 def plot_lightcone(lightcone: Lightcone, ax: plt.Axes, description: str, slice_number: int = None) -> None:
-    # TODO - xticks should be frequencies
-    logger.debug(f"Lightcone redshift range is {lightcone.redshifts.min():.2e} to {lightcone.redshifts.max():.2e}")
-    ax.set_title(description)
-    # the lightcone.redshifts are actually scale factors, so we need to convert them
+    lbox = lightcone.parameters.simulation.Lbox
     redshifts = 1 / lightcone.redshifts - 1
 
-    lbox = lightcone.parameters.simulation.Lbox
+    logger.debug(f"Lightcone dynamic range is {lightcone.data.min():.2e} to {lightcone.data.max():.2e}")
+    # the lightcone.redshifts are actually scale factors, so we need to convert them
 
     if slice_number is None:
         slice_number = lightcone.data.shape[0] // 2
 
-    norm, cmap, label = define_norm_cbar_label(lightcone.data, lightcone.quantity)
+    norm, cmap, label = define_norm_cbar_label(lightcone.data[slice_number, ...], lightcone.quantity)
 
     xi = np.tile(lightcone.redshifts, (lightcone.data.shape[1], 1))
     yi = np.tile(np.linspace(0, lbox, lightcone.data.shape[1]).reshape(-1, 1), (1, lightcone.redshifts.size))
@@ -67,6 +67,8 @@ def plot_lightcone(lightcone: Lightcone, ax: plt.Axes, description: str, slice_n
     logger.debug(f"Plotting slice {slice_number} with {xi.shape=} x {yi.shape=} x {zj.shape=}")
 
     im = ax.pcolormesh(xi, yi, zj, cmap=cmap, norm=norm)
+    # show the description as white text in the top left corner
+    ax.text(0.02, 0.1, description, color='white', fontweight="bold", transform=ax.transAxes)
 
     ax.set_xlabel('a')
     ax.set_ylabel('L (Mpc)')

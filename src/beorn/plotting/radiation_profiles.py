@@ -146,3 +146,57 @@ def plot_1D_profiles(parameters: Parameters, profiles: RadiationProfiles, mass_i
     fig.tight_layout()
     fig.subplots_adjust(right=0.8)
     fig.show()
+
+
+def plot_profile_alpha_dependence(ax: plt.axes, profiles: RadiationProfiles, quantity: str, mass_index: int, redshift_index: int, alphas: list, colors: list) -> None:
+
+    # since these are hdf5 datasets, we need to copy it to a numpy array first
+    co_radial_grid = profiles.r_grid_cell[:]
+    r_lyal_phys = profiles.r_lyal[:]
+    zz = profiles.z_history[:]
+
+    z_val = zz[redshift_index]
+    actual_alpha_list = []
+
+    print(f"Plotting profiles at {redshift_index=}, {z_val=} => M_h = {profiles.halo_mass_bins[mass_index, 0, redshift_index]:.2e}")
+
+    for j, alpha_j in enumerate(alphas):
+        # the user specifies the redshifts and alpha values - here we find the index lying closest to these values in the profile
+
+        ind_alpha = np.argmin(np.abs(profiles.parameters.simulation.halo_mass_accretion_alpha - alpha_j))
+        alpha_val = profiles.parameters.simulation.halo_mass_accretion_alpha[ind_alpha]
+
+        actual_alpha_list.append(alpha_val)
+
+        # some quantities are required to plot sensible profiles
+        T_adiab_z = T_adiab(z_val, profiles.parameters)
+        Temp_profile = profiles.rho_heat[:, mass_index, ind_alpha, redshift_index] + T_adiab_z
+
+        x_HII_profile = np.zeros((len(co_radial_grid)))
+        x_HII_profile[np.where(co_radial_grid < profiles.R_bubble[mass_index, ind_alpha, redshift_index])] = 1
+
+        lyal_profile = profiles.rho_alpha[:, mass_index, ind_alpha, redshift_index]  # *1.81e11/(1+zzi)
+
+        color = colors[j]
+
+
+        if quantity == 'lyal':
+            ax.loglog(r_lyal_phys * (1 + z_val) / 0.68, lyal_profile, lw=1.7, color=color, alpha=0.8)
+            ax.set_xlabel('r [cMpc]')
+            ax.set_ylabel(r'$\rho_{\alpha}$ [$\mathrm{pcm}^{-2}\, \mathrm{s}^{-1} \, \mathrm{Hz}^{-1}$]')
+
+        elif quantity == 'temp':
+            ax.loglog(co_radial_grid / 0.68, Temp_profile, lw=1.7, color=color, alpha=0.8)
+
+            ax.set_xlabel('r [cMpc]')
+            ax.set_ylabel(r'$\rho_{h}$ [K]')
+
+
+        elif quantity == 'xHII':
+            ax.semilogx(co_radial_grid / 0.68, x_HII_profile, lw=1.7, color=color, alpha=0.8)
+            ax.set_xlabel('r [cMpc]')
+            ax.tick_params(axis="both")
+            ax.set_ylabel(r'$x_{\mathrm{HII}}$')
+
+        else:
+            raise ValueError(f"Unknown quantity: {quantity}")

@@ -113,7 +113,7 @@ class SimulationParameters:
     halo_mass_bin_max: float = 1e14
     """Maximum halo mass bin in solar masses."""
 
-    halo_mass_bin_n: int = 12
+    halo_mass_bin_n: int = 100
     """Number of mass bins."""
 
     Ncell: int = 128

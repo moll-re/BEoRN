@@ -7,8 +7,8 @@ from ..structs import HaloCatalog
 from ..particle_mapping import pylians
 from .alpha_fitting import vectorized_alpha_fit
 
-# from: https://thesan-project.com/thesan/thesan.html
-THESAN_PARTICLE_COUNT = 1050**3
+# following: https://thesan-project.com/thesan/thesan.html
+
 INVALID_FALLBACK: float | Literal["mean", "median"] = 0.79
 
 class ThesanLoader(BaseLoader):
@@ -17,6 +17,8 @@ class ThesanLoader(BaseLoader):
     """
 
     def __init__(self, *args, **kwargs):
+        is_high_res = kwargs.pop("is_high_res", False)
+
         super().__init__(*args, **kwargs)
         self.thesan_root = self.parameters.simulation.file_root
         self.tree_root = self.thesan_root / "postprocessing"/ "trees"/ "LHaloTree"
@@ -24,11 +26,20 @@ class ThesanLoader(BaseLoader):
         self.offset_path_root = self.thesan_root / "postprocessing" / "offsets"
         self.cached_tree = self.tree_root / "tree_cache.hdf5"
 
+        if is_high_res:
+            # this is thesan dark 1
+            tree_name = "trees_sf1_190.10.hdf5"
+            self.particle_count = 2100**3
+        else:
+            # this is thesan dark 2
+            tree_name = "trees_sf1_167.10.hdf5"
+            self.particle_count = 1050**3
+
 
         self.logger.info(f"Initialized THESAN data loader - reading files from {self.tree_root}, {self.snapshot_path_root}, {self.offset_path_root}")
 
         # get the available redshifts
-        with h5py.File(self.tree_root / "trees_sf1_167.10.hdf5", "r") as f:
+        with h5py.File(self.tree_root / tree_name, "r") as f:
             header = f["Header"]
             redshifts = header["Redshifts"][:]
             self.logger.debug(f"Redshifts: {redshifts.size}")
@@ -94,8 +105,8 @@ class ThesanLoader(BaseLoader):
             # in this case a fit is likely to be very unstable, so we just return a constant baseline value
             # since at that point halo masses are low, this is not too problematic
             self.logger.warning(f"Available redshifts for lookback ({redshift_range.size}) are too few compared to the requested ({self.parameters.source.mass_accretion_lookback}), returning constant fallback value for mass accretion rate")
-            return current_halo_ids, np.full(current_halo_count, 0.79)
-
+            return current_halo_ids, np.full(current_halo_count, 0.04)
+            # TODO - should the value of this be a parameter?
 
         halo_mass_history = np.ndarray((current_halo_count, redshift_range.size))
 
@@ -112,7 +123,6 @@ class ThesanLoader(BaseLoader):
 
         # at this point halo_mass_history has the same shape as redshift_range, and the sorting is current_redshift -> past redshifts
         # remove invalid values, but don't set them to 0 because the fitting is in log space
-        # TODO - what happens if the mass is set to the previous mass instead (setting alpha to 0 instead to a high value)
         halo_mass_history[halo_mass_history <= 0] = 1
         self.logger.debug(f"Found {np.sum(np.isnan(halo_mass_history))} haloes with nan masses")
         self.logger.debug(f"Found {np.sum(np.any(halo_mass_history == 1, axis=1))} trees that stopped early (invalid or missing mass)")
@@ -159,8 +169,8 @@ class ThesanLoader(BaseLoader):
                 group_end_index = group_start_index + group_positions.shape[0]
 
                 current_halo_positions[group_start_index:group_end_index, :] = group_positions
-                # current_halo_masses[group_start_index:group_end_index] = snap["Group"]["Group_M_Crit200"][:]
-                # current_halo_masses[group_start_index:group_end_index] = snap["Group"]["Group_M_Crit500"][:]
+                # NB: other keys related to mass exist - make sure you understand the requirements of your simulation
+                # Group_M_Crit200, Group_M_Crit500
                 current_halo_masses[group_start_index:group_end_index] = snap["Group"]["GroupMass"][:]
 
                 group_start_index = group_end_index
@@ -181,28 +191,24 @@ class ThesanLoader(BaseLoader):
 
 
     def load_halo_catalog(self, redshift_index: int) -> HaloCatalog:
-
+        # using the tree fitting only gives an estimate for halos that actually appear in a tree
         current_halo_ids, halo_alphas = self.get_halo_accretion_rate_from_tree(redshift_index)
+        alpha_fallback = self.fallback_alpha(halo_alphas)
 
+        # the information for the current snapshot is not from the tree but from the group catalog
         current_halo_positions, current_halo_masses, current_subhalo_to_group_mappings = self.get_halo_information_from_catalog(redshift_index)
         snapshot_group_count = current_halo_masses.size
 
-        # join both informations - from the tree (incomplete, but with alpha), and from the group catalog
-
-
+        ## join both informations
         # assuming that the indices from the group catalog are strictly monotonic we can force the same sorting on the halo ids obtained from the tree
         sorting = np.argsort(current_halo_ids)
-
         tree_ids = current_halo_ids[sorting]
         sorted_halo_alphas = halo_alphas[sorting]
-        # TODO - implement lower cutoff for halo mass when deducing alphas
-        # TODO - remove this temporary alpha adjustment
-        mean_alpha = np.mean(sorted_halo_alphas)
-        alpha_fallback = self.fallback_alpha(sorted_halo_alphas)
 
-        # fill the baseline value and replace it where we have a value: (for the groups!)
+        # fill the baseline value and replace it afterwards for the entries where we have a value
         full_alphas = np.full(snapshot_group_count, alpha_fallback)
 
+        # since we use the main progenitor branch, each id from there corresponds to a subhalo of the actual group - additional mapping is needed
         group_ids = current_subhalo_to_group_mappings[tree_ids]
         # fill in the alphas for the halos that are in the tree
         full_alphas[group_ids] = sorted_halo_alphas
@@ -212,8 +218,8 @@ class ThesanLoader(BaseLoader):
         # or in working form:
         full_alphas[~np.isfinite(full_alphas)] = alpha_fallback
 
-        # TODO - remove
-        full_alphas[:] = mean_alpha
+        # full_alphas[:] = full_alphas.mean()  # TEMPORARY OVERRIDE FOR TESTING PURPOSES
+        # self.logger.info(f"Overriding all alphas to the mean value of {full_alphas.mean():.2f} for testing purposes")
 
         # finally - clip the alphas to the range that is allowed by the parameters
         # - negative accretion has no meaning in beorn
@@ -247,7 +253,7 @@ class ThesanLoader(BaseLoader):
         # the files have a particular format, cf. https://thesan-project.com/thesan/snapshots.html
         snapshots = snapshot_path.glob("snap_*.hdf5")
 
-        particle_positions = np.zeros((THESAN_PARTICLE_COUNT, 3), dtype=np.float32)
+        particle_positions = np.zeros((self.particle_count, 3), dtype=np.float32)
 
         # load all particles which are spread across multiple file chunks
         start_index = 0
@@ -283,8 +289,8 @@ class ThesanLoader(BaseLoader):
         # the files have a particular format, cf. https://thesan-project.com/thesan/snapshots.html
         snapshots = snapshot_path.glob("snap_*.hdf5")
 
-        particle_velocities = np.zeros((THESAN_PARTICLE_COUNT, 3), dtype=np.float32)
-        particle_positions = np.zeros((THESAN_PARTICLE_COUNT, 3), dtype=np.float32)
+        particle_velocities = np.zeros((self.particle_count, 3), dtype=np.float32)
+        particle_positions = np.zeros((self.particle_count, 3), dtype=np.float32)
 
         # load all particles which are spread across multiple file chunks
         start_index = 0
