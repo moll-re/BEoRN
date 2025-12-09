@@ -2,7 +2,7 @@
 Authors
 =======
 
-* `Sambit Giri <https://sambit-giri.github.io/>`_ - `GitHub <https://github.com/sambit-giri>`_
-* `Timothée Schaeffer <https://www.phonebook.uzh.ch/?ID=1905001>`_ - `GitHub <https://github.com/timotheeschaeffer>`_
-* `Aurel Schneider <https://www.ics.uzh.ch/~aurel/>`_ - `GitHub <>`_
-
+* `Sambit Giri <https://sambit-giri.github.io/>`__ - `GitHub <https://github.com/sambit-giri>`__
+* `Timothée Schaeffer <https://github.com/timotheeschaeffer>`__
+* `Aurel Schneider <https://www.ics.uzh.ch/~aurel/>`__
+* `Rémy Moll <https://github.com/moll-re>`__
