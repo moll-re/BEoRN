@@ -1,2 +1,2 @@
-from .painter import Painter
+from .coordinator import PaintingCoordinator
 from .helpers import profile_to_3Dkernel

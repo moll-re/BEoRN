@@ -1,7 +1,7 @@
 """
 This module contains helper functions for computing various radiation profiles and related quantities.
 """
-import importlib
+import importlib.util
 from pathlib import Path
 import numpy as np
 from scipy.interpolate import splrep, splev, interp1d

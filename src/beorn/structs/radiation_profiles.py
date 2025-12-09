@@ -2,7 +2,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from .base_struct import BaseStruct
-from .parameters import Parameters
 
 
 @dataclass(slots = True)

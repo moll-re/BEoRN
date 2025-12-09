@@ -6,6 +6,22 @@ from .structs import Parameters
 from .constants import *
 
 
+def S_fct(Mh, Mt, g3, g4):
+    """
+    Parameters
+    ----------
+    Mh : float. Halo mass in [Msol/h]
+    Mt : float. Cutoff mass in [Msol/h]
+    g3,g4 : floats. Control the power-law behavior of the fct.
+
+    Returns
+    ----------
+    Small-scale part of the stellar-to-halo function f_star. See eq.6 in arXiv:2305.15466.
+    (g3,g4) = (1,1),(0,0),(4,-4) gives a boost, power-law, cutoff of SFE at small scales, respectively.
+    """
+
+    return (1 + (Mt / Mh) ** g3) ** g4
+
 
 def f_star_Halo(parameters: Parameters, Mh):
     """
@@ -33,6 +49,7 @@ def f_star_Halo(parameters: Parameters, Mh):
     fstar[np.where(Mh < parameters.source.halo_mass_min)] = 0
     return fstar
 
+
 def f_esc(parameters: Parameters, Mh):
     """
     Parameters
@@ -54,14 +71,14 @@ def f_esc(parameters: Parameters, Mh):
 
 def f_Xh(x_e):
     """
-     Parameters
-     ----------
-     x_e : Free electron fraction in the neutral medium
+    Parameters
+    ----------
+    x_e : Free electron fraction in the neutral medium
 
-     Returns
-     ----------
-     Fraction of X-ray energy deposited as heat in the IGM.
-     Dimensionless. Various fitting functions exist in the literature
+    Returns
+    ----------
+    Fraction of X-ray energy deposited as heat in the IGM.
+    Dimensionless. Various fitting functions exist in the literature
     """
     # Schull 1985 fit.
     # C,a,b = 0.9971, 0.2663, 1.3163

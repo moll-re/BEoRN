@@ -1,15 +1,20 @@
 """Helpers for the painting module."""
 import numpy as np
-from multiprocessing import shared_memory
-from concurrent.futures import ProcessPoolExecutor, wait
-from scipy.ndimage import distance_transform_edt
 from scipy.interpolate import interp1d
-from skimage.measure import label
 import logging
 logger = logging.getLogger(__name__)
 
-from ..structs.parameters import Parameters
 
+CONVOLVE_FFT_KWARGS = {
+    "boundary": "wrap",
+    "normalize_kernel": False,
+    "allow_huge": True
+}
+
+TQDM_KWARGS = {
+    "desc": "Painting redshift snapshots",
+    "unit": "snapshot",
+}
 
 
 def profile_to_3Dkernel(profile: callable, nGrid: int, LB: float) -> np.ndarray:
@@ -32,8 +37,6 @@ def profile_to_3Dkernel(profile: callable, nGrid: int, LB: float) -> np.ndarray:
     kern = profile(rgrid)
     assert np.all(np.isfinite(kern)), "Profile function returned non-finite values."
     return kern
-
-
 
 
 

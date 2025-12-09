@@ -29,9 +29,10 @@ class BaseStruct(ABC):
         Returns the file path for the HDF5 file associated with this object. The file name is generated based on the class name, parameters, and any additional keyword arguments.
         """
         prefix = cls.__name__
-        kwargs_string = "_".join([f"{key}={value}" for key, value in kwargs.items()])
-        file_name = f"{prefix}_{parameters.unique_hash()}_{kwargs_string}.h5"
-        return directory / file_name
+        file_name = f"{prefix}_{parameters.unique_hash()}"
+        if kwargs:
+            file_name += "_" + "_".join(f"{k}={v}" for k, v in kwargs.items())
+        return directory / f"{file_name}.h5"
 
 
     def __post_init__(self):

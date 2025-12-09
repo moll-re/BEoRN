@@ -3,7 +3,7 @@ Here we compute the Lyman_alpha and collisional coupling coefficient (x_al and x
 """
 
 import numpy as np
-import importlib
+import importlib.util
 from pathlib import Path
 
 from scipy.interpolate import splrep,splev

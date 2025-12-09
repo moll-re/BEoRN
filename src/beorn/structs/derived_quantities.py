@@ -2,8 +2,8 @@ import numpy as np
 import tools21cm as t2c
 from functools import cached_property
 
-from ..cosmo import dTb_fct
-from ..couplings import x_coll, S_alpha
+from ..cosmo import dTb_factor, T_cmb
+from ..couplings import x_coll
 from .. import constants
 
 import logging
@@ -34,12 +34,17 @@ class GridDerivedPropertiesMixin:
         This is a helper function to avoid code duplication in the properties.
         """
         if self._is_grid_data_multi_z():
-            z = self.z[:]
+            z = self.z[:][:, np.newaxis, np.newaxis, np.newaxis]
         else:
             z = self.z
-        grid = dTb_fct(z=z, Tk=temp[:], xtot=x_tot[:], delta_b=delta_b[:], x_HII=x_HII[:], parameters=self.parameters)
 
-        return grid
+        factor = dTb_factor(self.parameters)
+        return factor \
+            * np.sqrt(1 + z) \
+            * (1 - T_cmb(z) / temp[:]) \
+            * (1 - x_HII[:]) \
+            * x_tot[:] / (1 + x_tot[:]) \
+            * (1 + delta_b[:])
 
 
     @cached_property

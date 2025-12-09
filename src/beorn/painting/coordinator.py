@@ -3,115 +3,181 @@ import time
 from datetime import timedelta
 import logging
 from multiprocessing import shared_memory
-from concurrent.futures import ProcessPoolExecutor, wait
+from concurrent.futures import ProcessPoolExecutor, wait, as_completed
 import numpy as np
-from scipy.interpolate import interp1d
-from scipy.integrate import trapezoid
-from astropy.convolution import convolve_fft
+from pathlib import Path
 from tqdm.auto import tqdm
+try:
+    from mpi4py import MPI
+    from mpi4py.futures import MPICommExecutor
+    MPI_ENABLED = True
+except RuntimeError:
+    # mpi fails to import because the host system does not have it installed
+    MPI_ENABLED = False
 
-
-from .helpers import profile_to_3Dkernel, stacked_lyal_kernel, stacked_T_kernel
+from .helpers import TQDM_KWARGS
+from .painters import paint_alpha_profile, paint_ionization_profile, paint_temperature_profile
+from .spread  import spreading_excess_fast
 from ..cosmo import T_adiab_fluctu
 from ..couplings import S_alpha
 from ..io.handler import Handler
 from ..structs.radiation_profiles import RadiationProfiles
 from ..structs.parameters import Parameters
-from ..structs.snapshot_profiles import GridData
-from ..structs.global_profiles import GridDataMultiZ
+from ..structs.coeval_cube import CoevalCube
+from ..structs.temporal_cube import TemporalCube
 from ..structs.halo_catalog import HaloCatalog
-# from .spread import spread_excess_ionization
-from .spread  import spreading_excess_fast
 from ..load_input_data.base import BaseLoader
 
-CONVOLVE_FFT_KWARGS = {
-    "boundary": "wrap",
-    "normalize_kernel": False,
-    "allow_huge": True
-}
 
-
-TQDM_KWARGS = {
-    "desc": "Painting redshift snapshots",
-    "unit": "snapshot",
-}
-
-
-class Painter:
+class PaintingCoordinator:
     """
-    The Painter class responsible for applying the 1D profiles onto the DM haloes and create 3D maps and the quantities associated with them.
+    Main painting class responsible for the orchestration of 'painting' - the translation of 1D profiles to 3D maps using halo catalogs and density fields to add the spatial information.
+    In the halo model, three quantities are explicitly modelled and painted. They are already defined in the RadiationProfiles object:
+    - Ionization profiles (xHII)
+    - Lyman-alpha coupling profiles (x_alpha)
+    - Temperature profiles (T)
     """
     logger = logging.getLogger(__name__)
 
-    def __init__(self, parameters: Parameters, loader: type[BaseLoader], output_handler: Handler, cache_handler: Handler = None):
+    def __init__(
+            self,
+            parameters: Parameters,
+            loader: type[BaseLoader],
+            output_handler: Handler,
+            cache_handler: Handler = None,
+        ):
         """
         Initialize the Painter class with the given parameters.
 
         Args:
             parameters (Parameters): The parameters object containing cosmological and simulation parameters.
+            loader (BaseLoader): The loader class responsible for providing halo catalogs and density fields.
             output_handler (Handler): The handler for saving the painted output data.
-            cache_handler (Handler, optional): The handler for loading and saving cache data that is not needed for the final output.
+            cache_handler (Handler, optional): The handler for loading and saving cache data that can be reused between runs.
         """
         self.parameters = parameters
         self.output_handler = output_handler
         self.cache_handler = cache_handler
         self.loader = loader
+        self.snapshot_count = self.loader.redshifts.size
 
 
-    def paint_full(self, radiation_profiles: RadiationProfiles) -> GridDataMultiZ:
+    def paint_full(self, radiation_profiles: RadiationProfiles) -> TemporalCube:
         """
-        Starts the painting process for the full redshift range and saves the output to a file. If self.cache_handler is set, all intermediate computations are cached to speed up the process.
+        Starts the painting process for the full redshift range and saves the output to a file. We encourage to save intermediate results such as RadiationProfiles to avoid recomputation. If the radiation profiles have not been saved before, they will be saved now (in order to be passed to the individual painting processes).
+        """
+
+        # if MPI is being used, use a central dispatcher to assign redshift indices to different processes
+        if MPI_ENABLED:
+            return self.paint_mpi(radiation_profiles)
+        # no mpi - simply run each iteration consecutively in a single loop
+        else:
+            return self.paint_simple_loop(radiation_profiles)
+
+
+    def paint_mpi(self, radiation_profiles: RadiationProfiles) -> TemporalCube:
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+
+        # barrier to ensure all processes reach this point before proceeding: this ensures that all prerequisites are met
+        # probably optional
+        MPI.COMM_WORLD.Barrier()
+
+        self.logger.debug(f"Starting painter process on rank {rank}.")
+        if rank == 0:
+
+            # this is the "master" process. it will handle writing to the main output file.
+            self.logger.info(f"Setting up {comm.Get_size()} painting processes for MPI.")
+
+            cube = TemporalCube.create_empty(
+                self.parameters,
+                self.output_handler.file_root,
+                snapshot_number = self.snapshot_count,
+                **self.output_handler.write_kwargs
+            )
+
+        # since the other processes will need to load the radiation profiles from file, we ensure that the file exists
+        if radiation_profiles._file_path is None:
+            self.output_handler.write_file(self.parameters, radiation_profiles)
+
+        with MPICommExecutor(comm) as executor:
+            if executor is not None:
+                # we wrap the actual painting function to only take the index as argument. Then we can use mpi to automatically assign it to workers
+
+                futures = {executor.submit(self.paint_single, index, profiles_path = radiation_profiles._file_path): index for index in range(self.snapshot_count)}
+
+                if rank == 0:
+                    for future in as_completed(futures):
+                        loop_index = futures[future]
+                        grid_data = future.result()
+                        cube.append(grid_data, loop_index)
+
+                    self.logger.info(f"Painting of {self.snapshot_count} snapshots done.")
+
+                    # reinitialize the grid data to create the attributes that are mapped from the hdf5 fields
+                    cube = self.output_handler.load_file(self.parameters, TemporalCube)
+                    return cube
+
+
+    def paint_simple_loop(self, radiation_profiles: RadiationProfiles) -> TemporalCube:
+        cube = TemporalCube.create_empty(
+            self.parameters,
+            self.output_handler.file_root,
+            snapshot_number = self.snapshot_count,
+            **self.output_handler.write_kwargs
+        )
+
+        self.logger.info(f"Painting profiles onto grid for {self.snapshot_count} redshift snapshots. Using {self.parameters.simulation.cores} processes on a single node.")
+
+        for loop_index in tqdm(range(self.snapshot_count), **TQDM_KWARGS):
+            grid_data = self.paint_single(loop_index, radiation_profiles)
+            # write the painted output to the file (append mode)
+            cube.append(grid_data, loop_index)
+
+        self.logger.info(f"Painting of {self.snapshot_count} snapshots done.")
+
+        # reinitialize the grid data to create the attributes that are mapped from the hdf5 fields
+        cube = self.output_handler.load_file(self.parameters, TemporalCube)
+        return cube
+
+
+    def paint_single(self, z_index: int, profiles: RadiationProfiles = None, profiles_path: Path = None) -> CoevalCube:
+        """
+        Paints the halo properties for a single redshift.
         Args:
-            radiation_profiles (RadiationProfiles): The radiation profiles object containing the precomputed 1D profiles for each redshift snapshot.
-
+            z_index (int): The index of the redshift snapshot to paint.
+            profiles (RadiationProfiles, optional): The radiation profiles to use for painting. If not provided, they will be loaded from the specified path.
+            profiles_path (Path, optional): The path to load the radiation profiles from if not provided directly. This is used in MPI scenarios where the profiles cannot be passed directly to the worker processes.
         Returns:
-            GridDataMultiZ: The multi-redshift grid data containing the painted 3D maps for each redshift snapshot.
+            CoevalCube: The painted coeval cube at the specified redshift.
         """
-        multi_z_data = GridDataMultiZ.create_empty(self.parameters, self.output_handler.file_root, **self.output_handler.write_kwargs)
+        if profiles is None and profiles_path is None:
+            raise ValueError("Either profiles or profiles_path must be provided to paint_single.")
+        if profiles is None:
+            profiles = RadiationProfiles.read(profiles_path)
 
-        snapshot_count = radiation_profiles.z_history.size
-        self.logger.info(f"Painting profiles onto grid for {snapshot_count} redshift snapshots. Using {self.parameters.simulation.cores} processes.")
-        # TODO - this loop could be parallelized using MPI
-
-        for loop_index in tqdm(range(snapshot_count), **TQDM_KWARGS):
+        if self.cache_handler:
             try:
-                grid_data = self.cache_handler.load_file(self.parameters, GridData, z_index=loop_index)
-                self.logger.info(f"Found painted output in cache for {loop_index=}. Skipping.")
+                grid_data = self.cache_handler.load_file(self.parameters, CoevalCube, z_index=z_index)
+                self.logger.info(f"Found painted output in cache for {z_index=}. Skipping.")
+                grid_data.to_arrays()
+                return grid_data
 
             except FileNotFoundError:
                 # there is no cache or the cache does not contain the halo catalog - compute it fresh
                 self.logger.debug("Painted output not found in cache. Processing now")
 
-                grid_data = self.paint_single(z_index=loop_index, grid_model=radiation_profiles, loop_index=loop_index)
-                grid_data.loader = self.loader
-
-                if self.cache_handler:
-                    self.cache_handler.write_file(self.parameters, grid_data, z_index=loop_index)
-
-            # write the painted output to the file (append mode)
-            multi_z_data.append(grid_data)
-
-        self.logger.info(f"Painting of {snapshot_count} snapshots done.")
-
-        # reinitialize the grid data to create the attributes that are mapped from the hdf5 fields
-        multi_z_data = self.output_handler.load_file(self.parameters, GridDataMultiZ)
-        return multi_z_data
-
-
-    def paint_single(self, z_index: int, grid_model: RadiationProfiles, loop_index: int) -> GridData:
-        """Paints the halo properties for a single redshift."""
 
         iteration_start_time = time.time()
         zero_grid = np.zeros((self.parameters.simulation.Ncell, self.parameters.simulation.Ncell, self.parameters.simulation.Ncell))
 
-        halo_catalog = self.loader.load_halo_catalog(loop_index)
-        delta_b = self.loader.load_density_field(loop_index)
+        halo_catalog = self.loader.load_halo_catalog(z_index)
+        delta_b = self.loader.load_density_field(z_index)
 
         # find matching redshift between solver output and simulation snapshot.
-        # this will raise an error if the needed profiles are not available
-        # The loading is left in this function to allow for the possibility of parallelizing the painting
-        zgrid = grid_model.z_history[z_index]
-        mass_range = grid_model.halo_mass_bins[..., z_index]
+
+        zgrid = profiles.z_history[z_index]
+        mass_range = profiles.halo_mass_bins[..., z_index]
 
         # log some information about the current "paintable range"
         alphas = self.parameters.simulation.halo_mass_accretion_alpha
@@ -137,18 +203,19 @@ class Painter:
 
         # initialise the "main" grids here. Since they will be filled in place by multiple parallel processes, we need to use shared memory
         # get the memory size of the grids
+
         size = zero_grid.size * np.dtype(np.float64).itemsize
-        if "bubbles" in self.parameters.simulation.store_grids:
+        if "Grid_xHII" in self.parameters.simulation.store_grids:
             buffer_xHII = shared_memory.SharedMemory(create=True, size=size)
         else:
             buffer_xHII = None
 
-        if "Tk" in self.parameters.simulation.store_grids:
+        if "Grid_Temp" in self.parameters.simulation.store_grids:
             buffer_Temp = shared_memory.SharedMemory(create=True, size=size)
         else:
             buffer_Temp = None
 
-        if "lyal" in self.parameters.simulation.store_grids:
+        if "Grid_xal" in self.parameters.simulation.store_grids:
             buffer_xal = shared_memory.SharedMemory(create=True, size=size)
         else:
             buffer_xal = None
@@ -189,26 +256,21 @@ class Painter:
                     # shortcut: don't copy any memory if there are no halos to begin with
                     if halo_indices.size == 0:
                         continue
-
                     total_halos += halo_indices.size
 
                     # since the profiles are large and copied in the multiprocessing approach, we only pass the relevant slice
-                    profiles_of_bin = (
-                        grid_model.R_bubble[mass_index, alpha_index, z_index],
-                        grid_model.rho_alpha[:, mass_index, alpha_index, z_index],
-                        grid_model.rho_heat[:, mass_index, alpha_index, z_index],
-                    )
-                    # assert not np.any(np.isnan(profiles_of_bin[0])), "R_bubble at the current range seem to be malformed (got nan values)"
-                    # assert not np.any(np.isnan(profiles_of_bin[1])), "rho_alpha at the current range seem to be malformed (got nan values)"
-                    # assert not np.any(np.isnan(profiles_of_bin[2])), "rho_heat at the current range seem to be malformed (got nan values)"
+                    profiles_of_bin = profiles.profiles_of_halo_bin(z_index, alpha_index, mass_index)
+                    assert not np.any(np.isnan(profiles_of_bin[0])), "R_bubble at the current range seem to be malformed (got nan values)"
+                    assert not np.any(np.isnan(profiles_of_bin[1])), "rho_alpha at the current range seem to be malformed (got nan values)"
+                    assert not np.any(np.isnan(profiles_of_bin[2])), "rho_heat at the current range seem to be malformed (got nan values)"
 
-                    radial_grid = grid_model.r_grid_cell[:] / (1 + zgrid)  # pMpc/h
+                    radial_grid = profiles.r_grid_cell[:] / (1 + zgrid)  # pMpc/h
                     kwargs = {
                         "halo_catalog": halo_catalog.at_indices(halo_indices),
                         "z": zgrid,
                         # profiles related quantities
                         "radial_grid": radial_grid,
-                        "r_lyal": grid_model.r_lyal[:],
+                        "r_lyal": profiles.r_lyal[:],
                         "profiles_of_bin": profiles_of_bin,
                         # shared memory buffers
                         "buffer_lyal": buffer_xal,
@@ -259,7 +321,6 @@ class Painter:
 
         ## Excess spreading
         start_time = time.time()
-        spread_excess_ionization(self.parameters, Grid_xHII)
         Grid_xHII = spreading_excess_fast(self.parameters, Grid_xHII)
 
         self.logger.info(f'Redistributing excess photons from the overlapping regions took {timedelta(seconds=time.time() - start_time)}.')
@@ -295,7 +356,7 @@ class Painter:
         self.logger.info(f'Postprocessing of the grids took {timedelta(seconds=time.time() - start_time)}.')
         self.logger.info(f'Current snapshot took {timedelta(seconds=time.time() - iteration_start_time)}.')
 
-        return GridData(
+        grid_data = CoevalCube(
             parameters = self.parameters,
             z = zgrid,
             delta_b = delta_b,
@@ -303,6 +364,10 @@ class Painter:
             Grid_xHII = Grid_xHII,
             Grid_xal = Grid_xal,
         )
+
+        if self.cache_handler:
+            self.cache_handler.write_file(self.parameters, grid_data, z_index=z_index)
+        return grid_data
 
 
     def paint_single_mass_bin(
@@ -337,7 +402,7 @@ class Painter:
             x_HII_profile[np.where(radial_grid < R_bubble / (1 + z))] = 1
 
             # modify Grid_xHII in place
-            self.paint_ionization_profile(
+            paint_ionization_profile(
                 output_grid_xHII, radial_grid, x_HII_profile, nGrid, LBox, z, halo_grid
             )
 
@@ -349,122 +414,14 @@ class Painter:
 
             # TODO - document how r_lyal is the physical distance for lyal profile. Never goes further away than 100 pMpc/h (checked)
             # modify Grid_xal in place
-            self.paint_alpha_profile(
-                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, z, truncate, halo_grid
+            paint_alpha_profile(
+                output_grid_lyal, r_lyal, x_alpha_prof, nGrid, LBox, self.parameters.simulation.minimum_grid_size_lyal, z, truncate, halo_grid
             )
 
         if buffer_temp:
             # initialize the output grid over the shared memory buffer
             output_grid_temp = np.ndarray(output_shape, dtype=np.float64, buffer=buffer_temp.buf)
             # modify Grid_Temp in place
-            self.paint_temperature_profile(
-                output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, z, truncate, halo_grid
+            paint_temperature_profile(
+                output_grid_temp, radial_grid, Temp_profile, nGrid, LBox, self.parameters.simulation.minimum_grid_size_heat, z, truncate, halo_grid
             )
-
-
-    def paint_ionization_profile(
-        self,
-        output_grid: np.ndarray,
-        radial_grid,
-        x_HII_profile,
-        nGrid, LBox,
-        z,
-        halo_grid: np.ndarray
-        ):
-        # TODO - describe how this modifies the output_grid in place
-        profile_xHII = interp1d(
-            x = radial_grid * (1 + z),
-            y = x_HII_profile,
-            bounds_error = False,
-            fill_value = (1, 0)
-        )
-        kernel_xHII = profile_to_3Dkernel(profile_xHII, nGrid, LBox)
-        # self.logger.debug(f"kernel_xHII has {np.sum(np.isnan(kernel_xHII))} NaN values")
-
-        if not np.any(kernel_xHII > 0):
-            ### if the bubble volume is smaller than the grid size,we paint central cell with ion fraction value
-            # kernel_xHII[int(nGrid / 2), int(nGrid / 2), int(nGrid / 2)] = np.trapz(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3
-            output_grid += halo_grid * trapezoid(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / nGrid / (1 + z)) ** 3
-
-        else:
-            renorm = trapezoid(x_HII_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xHII)
-            # extra_ion = put_profiles_group(Pos_Halos_Grid[indices], kernel_xHII * 1e-7 / np.sum(kernel_xHII)) * np.sum(kernel_xHII) / 1e-7 * renorm
-            output_grid += convolve_fft(
-                array = halo_grid,
-                kernel = kernel_xHII * 1e-7 / np.sum(kernel_xHII),
-                **CONVOLVE_FFT_KWARGS
-            ) * np.sum(kernel_xHII) / 1e-7 * renorm
-            # bubble_volume = trapezoid(4 * np.pi * radial_grid ** 2 * x_HII_profile, radial_grid)
-            # print('bubble volume is ', len(indices) * bubble_volume,'pMpc, grid volume is', np.sum(extra_ion)* (LBox /nGrid/ (1 + z)) ** 3 )
-            # Grid_xHII_i += extra_ion
-
-
-    def paint_alpha_profile(
-        self,
-        output_grid: np.ndarray,
-        r_lyal,
-        x_alpha_prof,
-        nGrid,
-        LBox,
-        z,
-        truncate,
-        halo_grid: np.ndarray
-        ):
-
-        ### We use this stacked_kernel functions to impose periodic boundary conditions when the lyal or T profiles extend outside the box size. Very important for Lyman-a.
-        if isinstance(truncate, float):
-            # truncate below a certain radius
-            x_alpha_prof[r_lyal * (1 + z) < truncate] = x_alpha_prof[r_lyal * (1 + z) < truncate][-1]
-
-        kernel_xal = stacked_lyal_kernel(
-            r_lyal * (1 + z),
-            x_alpha_prof,
-            LBox,
-            nGrid,
-            nGrid_min = self.parameters.simulation.minimum_grid_size_lyal
-        )
-
-        if np.any(kernel_xal > 0):
-            renorm = trapezoid(x_alpha_prof * 4 * np.pi * r_lyal ** 2, r_lyal) / (LBox / (1 + z)) ** 3 / np.mean(kernel_xal)
-
-            output_grid += convolve_fft(
-                array = halo_grid,
-                kernel = kernel_xal * 1e-7 / np.sum(kernel_xal),
-                **CONVOLVE_FFT_KWARGS
-            ) * renorm * np.sum(kernel_xal) / 1e-7
-            # we do this trick to avoid error from the fft when np.sum(kernel) is too close to zero.
-
-
-    def paint_temperature_profile(
-        self,
-        output_grid: np.ndarray,
-        radial_grid,
-        Temp_profile,
-        nGrid,
-        LBox,
-        z,
-        truncate,
-        halo_grid: np.ndarray
-    ):
-
-        # TODO - truncation should not be handled by the PAINT function
-        if isinstance(truncate, float):
-            # truncate below a certain radius
-            Temp_profile[radial_grid * (1 + z) < truncate] = Temp_profile[radial_grid * (1 + z) < truncate][-1]
-
-        kernel_T = stacked_T_kernel(
-            radial_grid * (1 + z),
-            Temp_profile,
-            LBox,
-            nGrid,
-            nGrid_min = self.parameters.simulation.minimum_grid_size_heat
-        )
-
-        if np.any(kernel_T > 0):
-            renorm = trapezoid(Temp_profile * 4 * np.pi * radial_grid ** 2, radial_grid) / (LBox / (1 + z)) ** 3 / np.mean(kernel_T)
-
-            output_grid += convolve_fft(
-                array = halo_grid,
-                kernel = kernel_T * 1e-7 / np.sum(kernel_T),
-                **CONVOLVE_FFT_KWARGS
-            ) * np.sum(kernel_T) / 1e-7 * renorm

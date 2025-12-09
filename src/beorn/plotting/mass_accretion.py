@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from ..structs import RadiationProfiles
-from ..radiation_profiles.massaccretion import mass_accretion
+from ..precomputation.massaccretion import mass_accretion
 
 
 # TODO - make better

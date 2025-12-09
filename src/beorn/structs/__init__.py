@@ -1,8 +1,7 @@
 from .parameters import Parameters
 
-from .base_struct import BaseStruct
 from .radiation_profiles import RadiationProfiles
-from .snapshot_profiles import GridData
-from .global_profiles import GridDataMultiZ
+from .coeval_cube import CoevalCube
+from .temporal_cube import TemporalCube
 from .halo_catalog import HaloCatalog
 from .lightcone import Lightcone

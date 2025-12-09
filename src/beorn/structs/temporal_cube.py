@@ -8,16 +8,16 @@ import tools21cm as t2c
 logger = logging.getLogger(__name__)
 
 from .base_struct import BaseStruct
-from .snapshot_profiles import GridData
+from .coeval_cube import CoevalCube
 from .base_quantities import GridBasePropertiesMixin
 from .derived_quantities import GridDerivedPropertiesMixin
 from .parameters import Parameters
 
 
 @dataclass
-class GridDataMultiZ(BaseStruct, GridBasePropertiesMixin, GridDerivedPropertiesMixin):
+class TemporalCube(BaseStruct, GridBasePropertiesMixin, GridDerivedPropertiesMixin):
     """
-    Collection of grid data over multiple redshifts. This is implemented such that an additional z dimension is added to each field of the GridData class.
+    Collection of grid data over multiple redshifts. This is implemented such that an additional z dimension is added to each field of the similar 'CoevalCube' class.
     Appending a new redshift to this data automatically appends to the underlying hdf5 file.
     As such, this class reuses all the grid data properties (which are implemented as base properties and derived properties in mixin classes). Only the z dimension is added here.
     """
@@ -26,39 +26,56 @@ class GridDataMultiZ(BaseStruct, GridBasePropertiesMixin, GridDerivedPropertiesM
     """Array of redshifts for which the grid data is available."""
 
     @classmethod
-    def create_empty(cls, parameters: Parameters, directory: Path, **kwargs) -> "GridDataMultiZ":
+    def create_empty(cls, parameters: Parameters, directory: Path, snapshot_number: int = None, **kwargs) -> "TemporalCube":
         """
-        Creates an empty HDF5 file with the given file path. If the file already exists, it is not overwritten.
+        Creates an empty HDF5 file with the given file path. If the file already exists, it is not overwritten. In order to create an object of the correct size (to be used by parallel implementations), the snapshot_number must be provided. If not provided, an empty object is created without pre-allocated arrays but this cannot be used in parallel implementations.
         """
         path = cls.get_file_path(directory, parameters, **kwargs)
-        ret = cls(
-            z = None,
-            parameters = parameters,
-            delta_b = None,
-            Grid_Temp = None,
-            Grid_xHII = None,
-            Grid_xal = None,
-        )
+        if snapshot_number is None:
+            logger.warning("snapshot_number is not provided. Creating an empty GridDataMultiZ without pre-allocated arrays. This cannot be used in parallel implementations.")
+            ret = cls(
+                z = None,
+                parameters = parameters,
+                delta_b = None,
+                Grid_Temp = None,
+                Grid_xHII = None,
+                Grid_xal = None,
+            )
+        else:
+            # initialize the arrays with the correct shape so that when initializing the cls object, a hdf5 file is created with datasets of the correct shape
+            grid_shape = (snapshot_number, parameters.simulation.Ncell, parameters.simulation.Ncell, parameters.simulation.Ncell)
+            z_size = (snapshot_number,)
+            ret = cls(
+                z = np.zeros(z_size),
+                parameters = parameters,
+                delta_b = np.zeros(grid_shape),
+                Grid_Temp = np.zeros(grid_shape),
+                Grid_xHII = np.zeros(grid_shape),
+                Grid_xal = np.zeros(grid_shape),
+            )
+
         # set after initialization to avoid reading from that file on construction
         ret._file_path = path
-        path.touch(exist_ok=True)
+        ret.write()
         return ret
 
 
-    def append(self, grid_data: GridData) -> None:
+    def append(self, grid_snapshot: CoevalCube, index: int) -> None:
         """
         Append a new GridData (for another redshift snapshot) to the collection of grid data.
         """
-        # TODO make compliant with a MPI implementation
-        if not isinstance(grid_data, GridData):
-            raise TypeError("grid_data must be an instance of GridData")
+        if not isinstance(grid_snapshot, CoevalCube):
+            raise TypeError("grid_snapshot must be an instance of GridData")
 
         if self._file_path is None:
             raise ValueError("File path is not set. Cannot append data.")
 
+        # NB: this could in theory have been made mpi-compatible: the h5py context can handle calls from different mpi ranks
+        # but: this requires h5py to compiled against an mpi-compatible h5 backend
+        # Instead, we use the precompiled h5py and simply assign a "master" process that handles the writing part centrally. No special care needed.
         with h5py.File(self._file_path, 'a') as hdf5_file:
-            for f in grid_data._writable_fields():
-                value = getattr(grid_data, f)
+            for f in grid_snapshot._writable_fields():
+                value = getattr(grid_snapshot, f)
 
                 if isinstance(value, (float, int, list)):
                     # Convert float to numpy array so that they can still be appended
@@ -79,19 +96,8 @@ class GridDataMultiZ(BaseStruct, GridBasePropertiesMixin, GridDerivedPropertiesM
                     logger.debug(f"Not appending {f} to {self._file_path.name} because type {type(value)} is not appendable.")
                     continue
 
-                if f not in hdf5_file:
-                    # Create a new dataset if it doesn't exist
-                    hdf5_file.create_dataset(
-                        f,
-                        data = value[np.newaxis, ...],
-                        maxshape = (None, *value.shape)
-                        # explicitly set the maxshape to allow for appending
-                        )
-                else:
-                    # Append to the existing dataset
-                    dataset = hdf5_file[f]
-                    dataset.resize((dataset.shape[0] + 1, *dataset.shape[1:]))
-                    dataset[-1] = value
+                dataset = hdf5_file[f]
+                dataset[index, ...] = value
 
 
     def power_spectrum(self, quantity: np.ndarray, parameters: Parameters) -> tuple[np.ndarray, np.ndarray]:

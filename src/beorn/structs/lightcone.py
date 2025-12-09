@@ -3,7 +3,7 @@ import numpy as np
 import tools21cm as t2c
 from dataclasses import dataclass
 from .parameters import Parameters
-from .global_profiles import GridDataMultiZ
+from .temporal_cube import TemporalCube
 
 @dataclass
 class Lightcone:
@@ -23,7 +23,7 @@ class Lightcone:
 
 
     @classmethod
-    def build(cls, parameters: Parameters, grid: GridDataMultiZ, quantity='dTb') -> "Lightcone":
+    def build(cls, parameters: Parameters, grid: TemporalCube, quantity='dTb') -> "Lightcone":
         # prepare the data to a format readable by tools21cm
         try:
             grid_data = getattr(grid, quantity)

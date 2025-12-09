@@ -4,7 +4,7 @@ Slots are used to prevent the creation of new attributes. This is useful to avoi
 """
 
 from pathlib import Path
-import importlib
+import importlib.util
 import hashlib
 from dataclasses import dataclass, field, is_dataclass, fields
 from typing import Literal
@@ -12,7 +12,8 @@ import numpy as np
 import inspect
 import yaml
 import h5py
-
+import logging
+logger = logging.getLogger(__name__)
 from .helpers import bin_centers
 
 
@@ -134,8 +135,8 @@ class SimulationParameters:
     Lbox: float = 100
     """Box length, in [Mpc/h]. This is the length of the box in each dimension. The total volume will be Lbox^3."""
 
-    store_grids: list = ('Tk', 'bubbles', 'lyal', 'dTb')
-    """List of the grids to store. Simulating only the needed grids will speed up the simulation. The available grids are: Tk, bubbles, lyal, dTb."""
+    store_grids: list = ('delta_b', 'Grid_Temp', 'Grid_xHII', 'Grid_xal', 'Grid_dTb', )
+    """List of the grids to store. By default all quantities are stored but simulating a subset will speed up the simulation. The available grids are: 'delta_b', 'Grid_Temp', 'Grid_xHII', 'Grid_xal', 'Grid_dTb'"""
 
     cores: int = 1
     """Number of cores used in parallelization. The computation for each redshift can be parallelized with a shared memory approach. This is the number of cores used for this. Keeping the number at 1 disables parallelization."""
@@ -323,12 +324,13 @@ class Parameters:
                         # this is a dataset
                         sub_params_dict[sub_field_name] = sub_group[sub_field_name][...]
                     else:
-                        print(f"Did not find field {sub_field_name} in group {field_name}.")
+                        # some configurations result in empty fields (e.g. the file_root might not be set when using a mock simulation)
+                        logger.debug(f"Did not find field {sub_field_name} in group {field_name}.")
 
                 params_dict[field_name] = sub_params_dict
 
             else:
-                print("no dataclass", field_name)
+                logger.warning(f"Not a dataclass: {field_name}. Is this expected?")
                 params_dict[field_name] = group[field_name][:]
 
         return cls.from_dict(params_dict)

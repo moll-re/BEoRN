@@ -2,9 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tools21cm as t2c
 
-from ..structs import GridDataMultiZ, Parameters
+from ..structs import TemporalCube, Parameters
 
-def draw_dTb_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None):
+def draw_dTb_signal(ax: plt.Axes, grid: TemporalCube, label=None, color=None):
     """
     TODO
     """
@@ -16,7 +16,7 @@ def draw_dTb_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None):
     ax.set_ylabel(r'$dT_b$ [mK]')
 
 
-def draw_x_alpha_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None):
+def draw_x_alpha_signal(ax: plt.Axes, grid: TemporalCube, label=None, color=None):
     """
     TODO
     """
@@ -28,7 +28,7 @@ def draw_x_alpha_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=No
     ax.set_ylabel(r'$x_\alpha$')
 
 
-def draw_Temp_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None):
+def draw_Temp_signal(ax: plt.Axes, grid: TemporalCube, label=None, color=None):
     """
     TODO
     """
@@ -41,7 +41,7 @@ def draw_Temp_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None)
     ax.set_xlabel('z')
 
 
-def draw_xHII_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None):
+def draw_xHII_signal(ax: plt.Axes, grid: TemporalCube, label=None, color=None):
     """
     TODO
     """
@@ -53,7 +53,7 @@ def draw_xHII_signal(ax: plt.Axes, grid: GridDataMultiZ, label=None, color=None)
     ax.set_xlabel('z')
 
 
-def draw_dTb_power_spectrum_of_z(ax: plt.Axes, grid: GridDataMultiZ, parameters: Parameters, label=None, color=None, k_index=1):
+def draw_dTb_power_spectrum_of_z(ax: plt.Axes, grid: TemporalCube, parameters: Parameters, label=None, color=None, k_index=1):
     """
     TODO
     """
@@ -72,7 +72,7 @@ def draw_dTb_power_spectrum_of_z(ax: plt.Axes, grid: GridDataMultiZ, parameters:
     ax.text(0.05, 0.05, f'k={k:.2f} Mpc$^{{-1}}$', transform=ax.transAxes)
 
 
-def draw_dTb_power_spectrum_of_k(ax: plt.Axes, grid: GridDataMultiZ, parameters: Parameters, z_index: int, label=None, color=None):
+def draw_dTb_power_spectrum_of_k(ax: plt.Axes, grid: TemporalCube, parameters: Parameters, z_index: int, label=None, color=None):
     z = grid.z[z_index]
     current_grid = grid.Grid_dTb[z_index, ...]
     # TODO - fail on nan values instead of ignoring them
@@ -93,7 +93,7 @@ def draw_dTb_power_spectrum_of_k(ax: plt.Axes, grid: GridDataMultiZ, parameters:
 
 
 
-def full_diff_plot(fig: plt.Figure, grid: GridDataMultiZ, baseline_grid: GridDataMultiZ = None, label: str = None, color: str = None):
+def full_diff_plot(fig: plt.Figure, grid: TemporalCube, baseline_grid: TemporalCube = None, label: str = None, color: str = None):
     # get or create the axes
     if fig.axes:
         axs = fig.axes

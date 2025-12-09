@@ -170,14 +170,6 @@ def Tspin_fct(Tcmb,Tk,xtot):
     return ((1 / Tcmb + xtot / Tk ) / (1 + xtot)) ** -1
 
 
-def dTb_fct(z, Tk, xtot, delta_b,x_HII, parameters: Parameters):
-    """
-    nHI_norm : (1+delta_b)*(1-xHII) , or also rho_HI/rhob_mean
-    Returns : Birghtness Temperature in mK.
-    """
-    factor = dTb_factor(parameters)
-    return factor * np.sqrt(1 + z) * (1 - Tcmb0 * (1 + z) / Tk) * (1 - x_HII) * xtot / (1 + xtot) * (1+delta_b)
-
 def dTb_factor(parameters: Parameters):
     """
     Constant factor in dTb formula
