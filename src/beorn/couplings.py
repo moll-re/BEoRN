@@ -3,14 +3,13 @@ Here we compute the Lyman_alpha and collisional coupling coefficient (x_al and x
 """
 
 import numpy as np
-from .constants import *
-from .cross_sections import sigma_HI
-import pkg_resources
-from .cosmo import comoving_distance, Hubble, hubble, T_cmb
-from .astro import f_star_Halo
-from scipy.interpolate import splrep,splev,interp1d
-from scipy.integrate import cumtrapz
+import importlib.util
+from pathlib import Path
 
+from scipy.interpolate import splrep,splev
+from .constants import *
+from .cosmo import T_cmb
+from .structs import Parameters
 
 
 def kappa_coll():
@@ -29,11 +28,11 @@ def kappa_coll():
     """
 
     names = 'T, kappa'
-    path_to_file = pkg_resources.resource_filename('beorn', "input_data/kappa_eH.dat")
+    path_to_file = Path(importlib.util.find_spec('beorn').origin).parent / 'input_data' / 'kappa_eH.dat'
     eH = np.genfromtxt(path_to_file, usecols=(0, 1), comments='#', dtype=float, names=names)
 
     names = 'T, kappa'
-    path_to_file = pkg_resources.resource_filename('beorn', 'input_data/kappa_HH.dat')
+    path_to_file = Path(importlib.util.find_spec('beorn').origin).parent / 'input_data' / 'kappa_HH.dat'
     HH = np.genfromtxt(path_to_file, usecols=(0, 1), comments='#', dtype=float, names=names)
 
     return HH, eH
@@ -102,7 +101,7 @@ def S_alpha(z, Tk, xHI):
     return S_al
 
 
-def eps_lyal(nu,param):
+def eps_lyal(nu, parameters: Parameters):
     """
     Lyman-a spectral energy distribution (power-law). See eq.8 in BEoRN paper.
 
@@ -116,9 +115,9 @@ def eps_lyal(nu,param):
     float. [photons.yr-1.Hz-1.SFR-1], SFR being the Star Formation Rate in Msol/h/yr
     """
 
-    h0    = param.cosmo.h
-    N_al  = param.source.N_al  #9690 number of lya photons per protons (baryons) in stars
-    alS = param.source.alS_lyal
+    h0    = parameters.cosmology.h
+    N_al  = parameters.source.n_lyman_alpha_photons  #9690 number of lya photons per protons (baryons) in stars
+    alS = parameters.source.lyman_alpha_power_law
 
     nu_min_norm  = nu_al
     nu_max_norm  = nu_LL
@@ -129,40 +128,3 @@ def eps_lyal(nu,param):
     eps_alpha = Inu(nu)*N_al/(m_p_in_Msun * h0)
 
     return eps_alpha
-
-
-
-
-
-
-####### Not used below this line
-
-def phi_alpha(x,E):
-    """
-    Fraction of the absorbed photon energy that goes into excitation. [Dimensionless]
-    From Dijkstra, Haiman, Loeb. Apj 2004.
-
-    Parameters
-    ----------
-    x : ionized hydrogen fraction at location
-    E : energy in eV
-
-    Returns
-    -------
-    float
-    """
-    return 0.39*(1-x**(0.4092*a_alpha(x,E)))**1.7592
-
-def a_alpha(x,E):
-    """
-    Used in phi_alpha.
-    """
-    return 2/np.pi * np.arctan(E/120 * (0.03/x**1.5 + 1)**0.25)
-
-
-
-
-
-
-
-

@@ -1,6 +1,4 @@
-ipython
-nbsphinx
-numpydoc
-sphinx-rtd-theme
-sphinx_readable_theme
-sphinx>=2.3
+sphinx>=7.2.6
+sphinx_book_theme
+sphinx-autodoc-typehints
+myst-nb

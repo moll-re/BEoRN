@@ -2,39 +2,42 @@
 Installation
 ============
 
-We highly recommend the use of a virtual environement. It helps to keep dependencies required by different projects separate. Few example tools to create virtual environments are `anaconda <https://www.anaconda.com/distribution/>`_, `virtualenv <https://virtualenv.pypa.io/en/latest/>`_ and `venv <https://docs.python.org/3/library/venv.html>`_.
+Beorn can be installed using `pip`. This should ensure that all required dependencies are made available during the installation process. Note that some dependencies may require additional system packages to be installed.
 
-The dependencies should be installed automatically during the installation process. If they fail for some reason, you can install them manually before installing the package. The list of required packages can be found in the *requirements.txt* file present in the root directory.
+The dependencies for Beorn are listed in the `pyproject.toml` file located at the root of the project directory.
 
-For a standard non-editable installation use::
+.. literalinclude:: ../pyproject.toml
+   :language: toml
+   :start-after: # include in docs
+   :end-before: # end include in docs
+   :caption: Dependencies from pyproject.toml
 
-    pip install git+https://github.com/sambit-giri/beorn.git [--user]
 
-The --user is optional and only required if you don't have write permission to your main python installation.
-If you wants to work on the code, you can download it directly from the `GitHub <https://github.com/sambit-giri/beorn>`_ page or clone the project using::
+Finally, to install Beorn, run the following command::
 
-    git clone git://github.com/sambit-giri/beorn.git
+    pip install git+https://github.com/cosmic-reionization/beorn.git
 
-Then, you can just install in place without copying anything using::
 
-    pip install -e /path/to/beorn [--user]
+A local, editable installation is also possible using pip (or equivalent). This is useful if you want to modify the code and test your changes without having to reinstall the package each time.
 
-The package can also be installed using the *setup.py* script. Find the file *setup.py* in the root directory. To install in the standard directory, run::
+1. Download or clone the `Repository on GitHub <https://github.com/sambit-giri/beorn>`_
 
-    python setup.py install
+2. Install in editable mode by running the following command::
 
-If you do not have write permissions, or you want to install somewhere else, you can specify some other installation directory, for example::
+    pip install -e /path/to/beorn
 
-    python setup.py install --home=~/mydir
 
-To see more options, run::
 
-    python setup.py --help-commands
 
-Or look `here <http://docs.python.org/2/install/>`_ for more details.
+Additional Dependencies
+========================
+The outputs of beorn are strongly linked to the input given by halo catalogs. Beorn can natively read halo catalogs from well-known simulation projects like the `Thesan <https://thesan-project.com/>`_ and `PkdGrav <https://arxiv.org/abs/1609.08621>`_ simulations.
 
-Tests
------
-For testing, one can use `pytest <https://docs.pytest.org/en/stable/>`_. To run all the test script, run the either of the following::
+Additionally, beorn can leverage semi-numerical simulation suites to generate synthetic halo catalogs on the fly. Currently, beorn supports the `21cmFAST <https://github.com/21cmfast/21cmFAST>`_ suite but an additional installation step is required to enable this feature. To install beorn with 21cmFAST support, run the following command::
 
-    python -m pytest tests 
+    pip install git+https://github.com/cosmic-reionization/beorn.git[extra]
+
+or directly install 21cmFAST using pip::
+
+    pip install 21cmfast
+
