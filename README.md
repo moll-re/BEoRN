@@ -1,4 +1,5 @@
-# BEoRN 
+# BEoRN
+
 
 Bubbles during Epoch Of Reionization Numerical-simulator (BEORN) is a code simulating the state of the intergalactic medium (IGM) during cosmic dawn and reionization. More documentation can be found at its [readthedocs](https://beorn.readthedocs.io/) page.
 
